@@ -20,7 +20,8 @@ increment provides:
 - GitHub Actions CI running the Go test suite.
 - Release automation that opens release-please PRs and publishes GHCR images
   when releases are created.
-- A built-in operational status GUI and read-only JSON status endpoint.
+- A built-in operational status GUI, editable source configuration forms, and a
+  JSON status endpoint.
 
 ## Local Development
 
@@ -43,6 +44,11 @@ read `http://localhost:8080/api/status` for the same source health and
 configuration summary as JSON. The status surface is for feed configuration and
 observability only; host findings and customer-facing vulnerability reporting
 remain in CT Ops.
+
+The status page can enable or disable the NVD and CISA KEV sources, change
+their feed endpoints, adjust the NVD request delay, and set or clear the NVD
+API key. Saved source settings are stored in the CT-CVE database and are applied
+to the next scheduled feed sync cycle.
 
 ## Container Images
 
@@ -82,6 +88,6 @@ returns the key value in HTML or JSON responses.
 
 This bootstrap now includes feed sync workers for the NVD and CISA KEV catalogs,
 including persistence of CVE metadata, known-exploited CVE metadata, and source
-status, plus the first read-only CT-CVE status GUI/API slice. Editable source
-configuration, feed/API logs, CT-CVE subscription status from CT Ops, and the CT
+status, plus the first CT-CVE status GUI/API slice with editable source
+configuration. Feed/API logs, CT-CVE subscription status from CT Ops, and the CT
 Ops connector remain outstanding migration work.

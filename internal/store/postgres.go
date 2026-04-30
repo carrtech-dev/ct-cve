@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"time"
 
+	"github.com/carrtech-dev/ct-cve/internal/config"
 	"github.com/carrtech-dev/ct-cve/internal/feed"
 	"github.com/carrtech-dev/ct-cve/internal/status"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -248,6 +250,70 @@ func (s *PostgresStore) ListFeedSourceStatus(ctx context.Context) ([]status.Feed
 		return nil, err
 	}
 	return statuses, nil
+}
+
+func (s *PostgresStore) ListFeedSourceConfig(ctx context.Context) ([]config.SourceSettings, error) {
+	const q = `
+		SELECT source, enabled, base_url, api_key, request_delay_ms
+		FROM feed_source_config
+		ORDER BY source
+	`
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var settings []config.SourceSettings
+	for rows.Next() {
+		var setting config.SourceSettings
+		var delayMS *int
+		if err := rows.Scan(
+			&setting.Source,
+			&setting.Enabled,
+			&setting.BaseURL,
+			&setting.APIKey,
+			&delayMS,
+		); err != nil {
+			return nil, err
+		}
+		if delayMS != nil {
+			setting.RequestDelay = time.Duration(*delayMS) * time.Millisecond
+		}
+		settings = append(settings, setting)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return settings, nil
+}
+
+func (s *PostgresStore) UpsertFeedSourceConfig(ctx context.Context, setting config.SourceSettings) error {
+	const q = `
+		INSERT INTO feed_source_config (
+			source, enabled, base_url, api_key, request_delay_ms, updated_at
+		)
+		VALUES ($1,$2,$3,$4,$5,NOW())
+		ON CONFLICT (source) DO UPDATE SET
+			enabled = EXCLUDED.enabled,
+			base_url = EXCLUDED.base_url,
+			api_key = EXCLUDED.api_key,
+			request_delay_ms = EXCLUDED.request_delay_ms,
+			updated_at = NOW()
+	`
+	var delayMS *int
+	if setting.RequestDelay > 0 {
+		ms := int(setting.RequestDelay / time.Millisecond)
+		delayMS = &ms
+	}
+	_, err := s.pool.Exec(ctx, q,
+		setting.Source,
+		setting.Enabled,
+		setting.BaseURL,
+		setting.APIKey,
+		delayMS,
+	)
+	return err
 }
 
 func jsonOrEmpty(raw []byte) []byte {

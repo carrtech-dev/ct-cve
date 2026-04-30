@@ -76,6 +76,55 @@ func TestSyncerRecordsSourceFailureAndContinues(t *testing.T) {
 	}
 }
 
+func TestSyncerReloadsSourcesFromProvider(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingStore{}
+	calls := 0
+	syncer := Syncer{
+		Store: store,
+		SourceProvider: func(context.Context) ([]Source, error) {
+			calls++
+			return []Source{
+				staticSource{
+					id:      SourceNVD,
+					enabled: true,
+					result: FetchResult{
+						Records: []CVERecord{{CVEID: "CVE-2026-7777", Source: SourceNVD}},
+					},
+				},
+			}, nil
+		},
+	}
+
+	if err := syncer.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
+	}
+	if len(store.records) != 1 || store.records[0].CVEID != "CVE-2026-7777" {
+		t.Fatalf("records = %#v, want provider source record", store.records)
+	}
+}
+
+func TestSyncerReturnsProviderError(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("config unavailable")
+	syncer := Syncer{
+		Store: &recordingStore{},
+		SourceProvider: func(context.Context) ([]Source, error) {
+			return nil, wantErr
+		},
+	}
+
+	if err := syncer.SyncOnce(context.Background()); !errors.Is(err, wantErr) {
+		t.Fatalf("SyncOnce error = %v, want %v", err, wantErr)
+	}
+}
+
 type staticSource struct {
 	id      string
 	enabled bool

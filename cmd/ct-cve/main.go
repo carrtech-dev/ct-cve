@@ -36,21 +36,15 @@ func main() {
 	}
 
 	httpClient := &http.Client{Timeout: cfg.FeedHTTPTimeout}
-	sources := make([]feed.Source, 0, 2)
-	if cfg.Sources.NVD.Enabled {
-		sources = append(sources, feed.NewNVDSource(feed.NVDSourceOptions{
-			BaseURL:      cfg.Sources.NVD.BaseURL,
-			APIKey:       cfg.Sources.NVD.APIKey,
-			RequestDelay: cfg.Sources.NVD.RequestDelay,
-			Client:       httpClient,
-		}))
-	}
-	if cfg.Sources.CISAKEV.Enabled {
-		sources = append(sources, feed.NewCISAKEVSource(cfg.Sources.CISAKEV.BaseURL, httpClient))
-	}
 	syncer := feed.Syncer{
-		Store:   db,
-		Sources: sources,
+		Store: db,
+		SourceProvider: func(ctx context.Context) ([]feed.Source, error) {
+			settings, err := db.ListFeedSourceConfig(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return buildSources(cfg.ApplySourceSettings(settings), httpClient), nil
+		},
 	}
 
 	mux := http.NewServeMux()
@@ -87,4 +81,20 @@ func main() {
 		slog.Error("failed to stop ct-cve service cleanly", "error", err)
 		os.Exit(1)
 	}
+}
+
+func buildSources(cfg config.Config, httpClient *http.Client) []feed.Source {
+	sources := make([]feed.Source, 0, 2)
+	if cfg.Sources.NVD.Enabled {
+		sources = append(sources, feed.NewNVDSource(feed.NVDSourceOptions{
+			BaseURL:      cfg.Sources.NVD.BaseURL,
+			APIKey:       cfg.Sources.NVD.APIKey,
+			RequestDelay: cfg.Sources.NVD.RequestDelay,
+			Client:       httpClient,
+		}))
+	}
+	if cfg.Sources.CISAKEV.Enabled {
+		sources = append(sources, feed.NewCISAKEVSource(cfg.Sources.CISAKEV.BaseURL, httpClient))
+	}
+	return sources
 }
