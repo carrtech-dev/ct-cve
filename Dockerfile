@@ -1,8 +1,9 @@
 FROM golang:1.23-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
+COPY migrations ./migrations
 RUN go test ./... && CGO_ENABLED=0 go build -o /out/ct-cve ./cmd/ct-cve
 
 FROM alpine:3.20
@@ -11,4 +12,3 @@ USER ct-cve
 COPY --from=build /out/ct-cve /usr/local/bin/ct-cve
 EXPOSE 8080
 ENTRYPOINT ["ct-cve"]
-

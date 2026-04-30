@@ -5,6 +5,7 @@ services:
       CT_CVE_HTTP_ADDR: :8080
       CT_CVE_DATABASE_URL: postgres://ct_cve:ct_cve@ct-cve-db:5432/ct_cve?sslmode=disable
       CT_CVE_FEED_SYNC_INTERVAL: 6h
+      CT_CVE_FEED_SYNC_ON_STARTUP: "true"
       CT_CVE_FEED_HTTP_TIMEOUT: 30s
       CT_CVE_NVD_ENABLED: "true"
       CT_CVE_NVD_REQUEST_DELAY: 6s

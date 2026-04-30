@@ -24,6 +24,9 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.FeedSyncInterval.String() != "6h0m0s" {
 		t.Fatalf("FeedSyncInterval = %s, want 6h0m0s", cfg.FeedSyncInterval)
 	}
+	if !cfg.FeedSyncOnStartup {
+		t.Fatal("FeedSyncOnStartup disabled by default, want enabled")
+	}
 	if cfg.FeedHTTPTimeout.String() != "30s" {
 		t.Fatalf("FeedHTTPTimeout = %s, want 30s", cfg.FeedHTTPTimeout)
 	}
@@ -47,6 +50,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 func TestLoadParsesFeedSourceConfig(t *testing.T) {
 	t.Setenv("CT_CVE_DATABASE_URL", "postgres://ct_cve:ct_cve@localhost:5432/ct_cve?sslmode=disable")
 	t.Setenv("CT_CVE_FEED_SYNC_INTERVAL", "2h")
+	t.Setenv("CT_CVE_FEED_SYNC_ON_STARTUP", "false")
 	t.Setenv("CT_CVE_FEED_HTTP_TIMEOUT", "45s")
 	t.Setenv("CT_CVE_NVD_API_KEY", "  test-key  ")
 	t.Setenv("CT_CVE_NVD_REQUEST_DELAY", "750ms")
@@ -60,6 +64,9 @@ func TestLoadParsesFeedSourceConfig(t *testing.T) {
 
 	if cfg.FeedSyncInterval.String() != "2h0m0s" {
 		t.Fatalf("FeedSyncInterval = %s, want 2h0m0s", cfg.FeedSyncInterval)
+	}
+	if cfg.FeedSyncOnStartup {
+		t.Fatal("FeedSyncOnStartup enabled, want disabled")
 	}
 	if cfg.FeedHTTPTimeout.String() != "45s" {
 		t.Fatalf("FeedHTTPTimeout = %s, want 45s", cfg.FeedHTTPTimeout)
@@ -105,6 +112,10 @@ func TestLoadRejectsInvalidSourceConfig(t *testing.T) {
 		{
 			name: "zero HTTP timeout",
 			env:  map[string]string{"CT_CVE_FEED_HTTP_TIMEOUT": "0s"},
+		},
+		{
+			name: "invalid sync on startup",
+			env:  map[string]string{"CT_CVE_FEED_SYNC_ON_STARTUP": "sometimes"},
 		},
 		{
 			name: "invalid NVD enabled flag",
