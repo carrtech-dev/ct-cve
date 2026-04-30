@@ -14,9 +14,18 @@ const (
 )
 
 const (
-	SourceCISAKEV = "cisa-kev"
-	SourceNVD     = "nvd"
+	SourceAlpineSecDB        = "alpine-secdb"
+	SourceCISAKEV            = "cisa-kev"
+	SourceDebianTracker      = "debian-tracker"
+	SourceNVD                = "nvd"
+	SourceRedHatSecurityData = "redhat-security-data"
+	SourceUbuntuOSV          = "ubuntu-osv"
 )
+
+type FetchResult struct {
+	Records          []CVERecord
+	AffectedPackages []AffectedPackage
+}
 
 type CVERecord struct {
 	CVEID             string
@@ -33,6 +42,22 @@ type CVERecord struct {
 	KEVProduct        string
 	KEVRequiredAction string
 	Source            string
+	MetadataJSON      []byte
+}
+
+type AffectedPackage struct {
+	CVEID             string
+	Source            string
+	DistroID          string
+	DistroVersionID   string
+	DistroCodename    string
+	PackageName       string
+	SourcePackageName string
+	FixedVersion      string
+	AffectedVersions  []string
+	Repository        string
+	Severity          Severity
+	PackageState      string
 	MetadataJSON      []byte
 }
 

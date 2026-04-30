@@ -33,10 +33,11 @@ func TestCISAKEVSourceFetchesAndParsesCatalog(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	source := NewCISAKEVSource(server.URL, server.Client())
-	records, err := source.Fetch(context.Background())
+	result, err := source.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
+	records := result.Records
 
 	if len(records) != 1 {
 		t.Fatalf("len(records) = %d, want 1: %#v", len(records), records)

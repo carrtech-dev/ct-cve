@@ -62,12 +62,12 @@ func (s NVDSource) Enabled() bool {
 	return s.baseURL != ""
 }
 
-func (s NVDSource) Fetch(ctx context.Context) ([]CVERecord, error) {
+func (s NVDSource) Fetch(ctx context.Context) (FetchResult, error) {
 	end := s.now().UTC()
 	start := end.Add(-s.lookback)
 	base, err := url.Parse(s.baseURL)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	values := base.Query()
 	values.Set("lastModStartDate", nvdTime(start))
@@ -82,7 +82,7 @@ func (s NVDSource) Fetch(ctx context.Context) ([]CVERecord, error) {
 		base.RawQuery = values.Encode()
 		page, pageTotal, err := s.fetchPage(ctx, base.String())
 		if err != nil {
-			return nil, err
+			return FetchResult{}, err
 		}
 		total = pageTotal
 		records = append(records, page...)
@@ -90,12 +90,12 @@ func (s NVDSource) Fetch(ctx context.Context) ([]CVERecord, error) {
 		if startIndex < total {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return FetchResult{}, ctx.Err()
 			case <-time.After(s.requestDelay):
 			}
 		}
 	}
-	return records, nil
+	return FetchResult{Records: records}, nil
 }
 
 func (s NVDSource) fetchPage(ctx context.Context, pageURL string) ([]CVERecord, int, error) {

@@ -16,8 +16,13 @@ func TestSyncerPersistsEnabledSourcesAndRecordsStatus(t *testing.T) {
 			staticSource{
 				id:      SourceCISAKEV,
 				enabled: true,
-				records: []CVERecord{
-					{CVEID: "CVE-2026-1234", KnownExploited: true, Source: SourceCISAKEV},
+				result: FetchResult{
+					Records: []CVERecord{
+						{CVEID: "CVE-2026-1234", KnownExploited: true, Source: SourceCISAKEV},
+					},
+					AffectedPackages: []AffectedPackage{
+						{CVEID: "CVE-2026-1234", Source: "debian-tracker", DistroID: "debian", DistroCodename: "bookworm", PackageName: "openssl", FixedVersion: "3.0.11-1~deb12u2"},
+					},
 				},
 			},
 			staticSource{id: "disabled", enabled: false},
@@ -30,6 +35,9 @@ func TestSyncerPersistsEnabledSourcesAndRecordsStatus(t *testing.T) {
 
 	if len(store.records) != 1 || store.records[0].CVEID != "CVE-2026-1234" {
 		t.Fatalf("records = %#v, want persisted CISA record", store.records)
+	}
+	if len(store.affected) != 1 || store.affected[0].PackageName != "openssl" {
+		t.Fatalf("affected = %#v, want persisted affected package", store.affected)
 	}
 	if len(store.results) != 1 || store.results[0].Source != SourceCISAKEV || store.results[0].Records != 1 || store.results[0].Error != "" {
 		t.Fatalf("results = %#v, want successful CISA status", store.results)
@@ -47,8 +55,10 @@ func TestSyncerRecordsSourceFailureAndContinues(t *testing.T) {
 			staticSource{
 				id:      "second",
 				enabled: true,
-				records: []CVERecord{
-					{CVEID: "CVE-2026-9999", Source: "second"},
+				result: FetchResult{
+					Records: []CVERecord{
+						{CVEID: "CVE-2026-9999", Source: "second"},
+					},
 				},
 			},
 		},
@@ -69,7 +79,7 @@ func TestSyncerRecordsSourceFailureAndContinues(t *testing.T) {
 type staticSource struct {
 	id      string
 	enabled bool
-	records []CVERecord
+	result  FetchResult
 	err     error
 }
 
@@ -81,17 +91,23 @@ func (s staticSource) Enabled() bool {
 	return s.enabled
 }
 
-func (s staticSource) Fetch(context.Context) ([]CVERecord, error) {
-	return s.records, s.err
+func (s staticSource) Fetch(context.Context) (FetchResult, error) {
+	return s.result, s.err
 }
 
 type recordingStore struct {
-	records []CVERecord
-	results []SourceResult
+	records  []CVERecord
+	affected []AffectedPackage
+	results  []SourceResult
 }
 
 func (s *recordingStore) UpsertCVERecords(_ context.Context, records []CVERecord) error {
 	s.records = append(s.records, records...)
+	return nil
+}
+
+func (s *recordingStore) UpsertAffectedPackages(_ context.Context, affected []AffectedPackage) error {
+	s.affected = append(s.affected, affected...)
 	return nil
 }
 

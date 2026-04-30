@@ -121,10 +121,11 @@ func TestNVDSourceFetchesPagesWithAPIKeyAndDateWindow(t *testing.T) {
 		Client:       server.Client(),
 	})
 
-	records, err := source.Fetch(context.Background())
+	result, err := source.Fetch(context.Background())
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
+	records := result.Records
 	if len(records) != 2 || records[0].CVEID != "CVE-2026-0001" || records[1].CVEID != "CVE-2026-0002" {
 		t.Fatalf("records = %#v, want two paged NVD records", records)
 	}
