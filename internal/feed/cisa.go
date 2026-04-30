@@ -33,23 +33,24 @@ func (s CISAKEVSource) Enabled() bool {
 	return s.baseURL != ""
 }
 
-func (s CISAKEVSource) Fetch(ctx context.Context) ([]CVERecord, error) {
+func (s CISAKEVSource) Fetch(ctx context.Context) (FetchResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL, nil)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return nil, err
+		return FetchResult{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("%s returned HTTP %d", SourceCISAKEV, resp.StatusCode)
+		return FetchResult{}, fmt.Errorf("%s returned HTTP %d", SourceCISAKEV, resp.StatusCode)
 	}
-	return ParseCISAKEV(resp.Body)
+	records, err := ParseCISAKEV(resp.Body)
+	return FetchResult{Records: records}, err
 }
 
 func ParseCISAKEV(r io.Reader) ([]CVERecord, error) {

@@ -9,11 +9,12 @@ import (
 type Source interface {
 	ID() string
 	Enabled() bool
-	Fetch(context.Context) ([]CVERecord, error)
+	Fetch(context.Context) (FetchResult, error)
 }
 
 type Store interface {
 	UpsertCVERecords(context.Context, []CVERecord) error
+	UpsertAffectedPackages(context.Context, []AffectedPackage) error
 	RecordSourceResult(context.Context, SourceResult) error
 }
 
@@ -27,8 +28,8 @@ func (s Syncer) SyncOnce(ctx context.Context) error {
 		if !source.Enabled() {
 			continue
 		}
-		records, err := source.Fetch(ctx)
-		result := SourceResult{Source: source.ID(), Records: len(records)}
+		fetched, err := source.Fetch(ctx)
+		result := SourceResult{Source: source.ID(), Records: len(fetched.Records)}
 		if err != nil {
 			result.Error = err.Error()
 			if recordErr := s.Store.RecordSourceResult(ctx, result); recordErr != nil {
@@ -37,7 +38,7 @@ func (s Syncer) SyncOnce(ctx context.Context) error {
 			slog.Warn("feed source sync failed", "source", source.ID(), "error", err)
 			continue
 		}
-		if err := s.Store.UpsertCVERecords(ctx, records); err != nil {
+		if err := s.Store.UpsertCVERecords(ctx, fetched.Records); err != nil {
 			result.Error = err.Error()
 			if recordErr := s.Store.RecordSourceResult(ctx, result); recordErr != nil {
 				return recordErr
@@ -45,10 +46,18 @@ func (s Syncer) SyncOnce(ctx context.Context) error {
 			slog.Warn("feed source persistence failed", "source", source.ID(), "error", err)
 			continue
 		}
+		if err := s.Store.UpsertAffectedPackages(ctx, fetched.AffectedPackages); err != nil {
+			result.Error = err.Error()
+			if recordErr := s.Store.RecordSourceResult(ctx, result); recordErr != nil {
+				return recordErr
+			}
+			slog.Warn("feed source affected package persistence failed", "source", source.ID(), "error", err)
+			continue
+		}
 		if err := s.Store.RecordSourceResult(ctx, result); err != nil {
 			return err
 		}
-		slog.Info("feed source sync completed", "source", source.ID(), "records", len(records))
+		slog.Info("feed source sync completed", "source", source.ID(), "records", len(fetched.Records), "affected_packages", len(fetched.AffectedPackages))
 	}
 	return nil
 }

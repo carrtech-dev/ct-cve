@@ -40,6 +40,12 @@ CREATE TABLE affected_packages (
 CREATE INDEX affected_packages_lookup_idx
   ON affected_packages (distro_id, distro_version_id, distro_codename, package_name);
 
+CREATE UNIQUE INDEX affected_packages_source_identity_idx
+  ON affected_packages (
+    cve_id, source, distro_id, distro_version_id, distro_codename,
+    package_name, fixed_version, repository
+  );
+
 CREATE TABLE integration_findings (
   id uuid PRIMARY KEY,
   org_id text NOT NULL,
@@ -58,4 +64,3 @@ CREATE TABLE integration_findings (
 
 CREATE INDEX integration_findings_org_host_idx
   ON integration_findings (org_id, host_id, last_seen_at DESC);
-

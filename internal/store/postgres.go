@@ -99,6 +99,49 @@ func (s *PostgresStore) UpsertCVERecords(ctx context.Context, records []feed.CVE
 	return nil
 }
 
+func (s *PostgresStore) UpsertAffectedPackages(ctx context.Context, affected []feed.AffectedPackage) error {
+	for _, row := range affected {
+		if err := s.upsertAffectedPackage(ctx, row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *PostgresStore) upsertAffectedPackage(ctx context.Context, row feed.AffectedPackage) error {
+	const q = `
+		INSERT INTO affected_packages (
+			cve_id, source, distro_id, distro_version_id, distro_codename, package_name,
+			source_package_name, fixed_version, affected_versions, repository, severity,
+			package_state, metadata_json, created_at, updated_at
+		)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),NOW())
+		ON CONFLICT (cve_id, source, distro_id, distro_version_id, distro_codename, package_name, fixed_version, repository) DO UPDATE SET
+			source_package_name = CASE WHEN EXCLUDED.source_package_name <> '' THEN EXCLUDED.source_package_name ELSE affected_packages.source_package_name END,
+			affected_versions = CASE WHEN array_length(EXCLUDED.affected_versions, 1) IS NOT NULL THEN EXCLUDED.affected_versions ELSE affected_packages.affected_versions END,
+			severity = CASE WHEN EXCLUDED.severity <> 'unknown' THEN EXCLUDED.severity ELSE affected_packages.severity END,
+			package_state = CASE WHEN EXCLUDED.package_state <> '' THEN EXCLUDED.package_state ELSE affected_packages.package_state END,
+			metadata_json = CASE WHEN EXCLUDED.metadata_json <> '{}'::jsonb THEN EXCLUDED.metadata_json ELSE affected_packages.metadata_json END,
+			updated_at = NOW()
+	`
+	_, err := s.pool.Exec(ctx, q,
+		row.CVEID,
+		row.Source,
+		row.DistroID,
+		row.DistroVersionID,
+		row.DistroCodename,
+		row.PackageName,
+		row.SourcePackageName,
+		row.FixedVersion,
+		row.AffectedVersions,
+		row.Repository,
+		string(row.Severity),
+		row.PackageState,
+		jsonOrEmpty(row.MetadataJSON),
+	)
+	return err
+}
+
 func (s *PostgresStore) upsertCVERecord(ctx context.Context, record feed.CVERecord) error {
 	const q = `
 		INSERT INTO cve_records (
