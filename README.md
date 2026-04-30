@@ -13,8 +13,8 @@ increment provides:
 - Initial PostgreSQL schema for CVE records, affected packages, and integration
   findings.
 - Embedded database migrations applied on service startup.
-- CISA KEV feed sync that persists known-exploited CVE metadata and source
-  status.
+- NVD and CISA KEV feed sync that persists CVE metadata, known-exploited
+  indicators, and source status.
 - Extracted distro package version comparison and matching logic.
 - Docker and Compose definitions for local development.
 - GitHub Actions CI running the Go test suite.
@@ -70,7 +70,7 @@ published release.
 
 ## Migration Status
 
-This bootstrap now includes the first feed sync worker for the CISA KEV catalog,
-including persistence of known-exploited CVE metadata and source status. NVD
-sync, distro advisory parser ports, API routes, auth, and the standalone GUI
+This bootstrap now includes feed sync workers for the NVD and CISA KEV catalogs,
+including persistence of CVE metadata, known-exploited CVE metadata, and source
+status. Distro advisory parser ports, API routes, auth, and the standalone GUI
 remain outstanding migration work.

@@ -35,7 +35,15 @@ func main() {
 	}
 
 	httpClient := &http.Client{Timeout: cfg.FeedHTTPTimeout}
-	sources := make([]feed.Source, 0, 1)
+	sources := make([]feed.Source, 0, 2)
+	if cfg.Sources.NVD.Enabled {
+		sources = append(sources, feed.NewNVDSource(feed.NVDSourceOptions{
+			BaseURL:      cfg.Sources.NVD.BaseURL,
+			APIKey:       cfg.Sources.NVD.APIKey,
+			RequestDelay: cfg.Sources.NVD.RequestDelay,
+			Client:       httpClient,
+		}))
+	}
 	if cfg.Sources.CISAKEV.Enabled {
 		sources = append(sources, feed.NewCISAKEVSource(cfg.Sources.CISAKEV.BaseURL, httpClient))
 	}

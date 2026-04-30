@@ -13,7 +13,10 @@ const (
 	SeverityUnknown  Severity = "unknown"
 )
 
-const SourceCISAKEV = "cisa-kev"
+const (
+	SourceCISAKEV = "cisa-kev"
+	SourceNVD     = "nvd"
+)
 
 type CVERecord struct {
 	CVEID             string
