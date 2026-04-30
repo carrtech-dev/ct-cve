@@ -11,11 +11,12 @@ import (
 )
 
 type Config struct {
-	HTTPAddr         string
-	DatabaseURL      string
-	FeedSyncInterval time.Duration
-	FeedHTTPTimeout  time.Duration
-	Sources          SourceConfig
+	HTTPAddr          string
+	DatabaseURL       string
+	FeedSyncInterval  time.Duration
+	FeedSyncOnStartup bool
+	FeedHTTPTimeout   time.Duration
+	Sources           SourceConfig
 }
 
 type SourceConfig struct {
@@ -50,6 +51,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	feedSyncOnStartup, err := boolFromEnv("CT_CVE_FEED_SYNC_ON_STARTUP", true)
+	if err != nil {
+		return Config{}, err
+	}
 	nvdEnabled, err := boolFromEnv("CT_CVE_NVD_ENABLED", true)
 	if err != nil {
 		return Config{}, err
@@ -72,10 +77,11 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		HTTPAddr:         valueOrDefault(os.Getenv("CT_CVE_HTTP_ADDR"), ":8080"),
-		DatabaseURL:      strings.TrimSpace(os.Getenv("CT_CVE_DATABASE_URL")),
-		FeedSyncInterval: feedSyncInterval,
-		FeedHTTPTimeout:  feedHTTPTimeout,
+		HTTPAddr:          valueOrDefault(os.Getenv("CT_CVE_HTTP_ADDR"), ":8080"),
+		DatabaseURL:       strings.TrimSpace(os.Getenv("CT_CVE_DATABASE_URL")),
+		FeedSyncInterval:  feedSyncInterval,
+		FeedSyncOnStartup: feedSyncOnStartup,
+		FeedHTTPTimeout:   feedHTTPTimeout,
 		Sources: SourceConfig{
 			NVD: NVDSourceConfig{
 				Enabled:      nvdEnabled,

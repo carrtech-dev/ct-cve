@@ -12,6 +12,9 @@ increment provides:
   CISA KEV sources.
 - Initial PostgreSQL schema for CVE records, affected packages, and integration
   findings.
+- Embedded database migrations applied on service startup.
+- CISA KEV feed sync that persists known-exploited CVE metadata and source
+  status.
 - Extracted distro package version comparison and matching logic.
 - Docker and Compose definitions for local development.
 - GitHub Actions CI running the Go test suite.
@@ -55,7 +58,8 @@ published release.
 | --- | --- | --- | --- |
 | `CT_CVE_DATABASE_URL` | Yes | | PostgreSQL connection string for CT-CVE. |
 | `CT_CVE_HTTP_ADDR` | No | `:8080` | HTTP bind address for the combined API/worker service. |
-| `CT_CVE_FEED_SYNC_INTERVAL` | No | `6h` | Periodic feed refresh interval used by the feed worker once enabled. |
+| `CT_CVE_FEED_SYNC_INTERVAL` | No | `6h` | Periodic feed refresh interval used by enabled feed sources. |
+| `CT_CVE_FEED_SYNC_ON_STARTUP` | No | `true` | Runs an immediate feed sync when the service starts. |
 | `CT_CVE_FEED_HTTP_TIMEOUT` | No | `30s` | Per-request timeout for vulnerability feed HTTP calls. |
 | `CT_CVE_NVD_ENABLED` | No | `true` | Enables the NVD CVE source. |
 | `CT_CVE_NVD_BASE_URL` | No | `https://services.nvd.nist.gov/rest/json/cves/2.0` | NVD CVE API endpoint. |
@@ -66,7 +70,7 @@ published release.
 
 ## Migration Status
 
-This bootstrap does not yet include feed sync workers, API routes, auth, or the
-standalone GUI. Feed source configuration is present so the feed sync workers can
-be added behind a validated runtime contract in a later migration PR, while the
-remaining service capabilities follow behind a stable repository and CI baseline.
+This bootstrap now includes the first feed sync worker for the CISA KEV catalog,
+including persistence of known-exploited CVE metadata and source status. NVD
+sync, distro advisory parser ports, API routes, auth, and the standalone GUI
+remain outstanding migration work.
