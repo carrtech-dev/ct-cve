@@ -1,0 +1,31 @@
+services:
+  ct-cve:
+    build: .
+    environment:
+      CT_CVE_HTTP_ADDR: :8080
+      CT_CVE_DATABASE_URL: postgres://ct_cve:ct_cve@ct-cve-db:5432/ct_cve?sslmode=disable
+    ports:
+      - "8080:8080"
+    depends_on:
+      ct-cve-db:
+        condition: service_healthy
+
+  ct-cve-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ct_cve
+      POSTGRES_USER: ct_cve
+      POSTGRES_PASSWORD: ct_cve
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ct_cve -d ct_cve"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5434:5432"
+    volumes:
+      - ct-cve-db-data:/var/lib/postgresql/data
+
+volumes:
+  ct-cve-db-data:
+
