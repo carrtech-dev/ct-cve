@@ -95,6 +95,112 @@ func TestStatusPageRendersOperationalOverview(t *testing.T) {
 	}
 }
 
+func TestStatusPageSavesEditableSourceConfiguration(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingConfigStore{
+		staticStore: staticStore{
+			settings: []config.SourceSettings{
+				{
+					Source:       "nvd",
+					Enabled:      true,
+					BaseURL:      "https://nvd.example.test/cves",
+					APIKey:       "existing-secret",
+					RequestDelay: 600 * time.Millisecond,
+				},
+			},
+		},
+	}
+	handler := NewHandler(testConfig(), store)
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	response := httptest.NewRecorder()
+	body := strings.NewReader("enabled=on&base_url=https%3A%2F%2Fnvd2.example.test%2Fcves&request_delay=900ms&api_key=new-secret")
+	request := httptest.NewRequest(http.MethodPost, "/sources/nvd", body)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Location"); got != "/status" {
+		t.Fatalf("Location = %q, want /status", got)
+	}
+	if len(store.saved) != 1 {
+		t.Fatalf("saved settings length = %d, want 1", len(store.saved))
+	}
+	saved := store.saved[0]
+	if saved.Source != "nvd" || !saved.Enabled {
+		t.Fatalf("saved source = %#v, want enabled NVD", saved)
+	}
+	if saved.BaseURL != "https://nvd2.example.test/cves" {
+		t.Fatalf("saved BaseURL = %q", saved.BaseURL)
+	}
+	if saved.APIKey != "new-secret" {
+		t.Fatalf("saved APIKey = %q, want new key", saved.APIKey)
+	}
+	if saved.RequestDelay != 900*time.Millisecond {
+		t.Fatalf("saved RequestDelay = %s, want 900ms", saved.RequestDelay)
+	}
+}
+
+func TestStatusPageKeepsExistingAPIKeyWhenSourceFormKeyIsBlank(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingConfigStore{
+		staticStore: staticStore{
+			settings: []config.SourceSettings{
+				{
+					Source:       "nvd",
+					Enabled:      true,
+					BaseURL:      "https://nvd.example.test/cves",
+					APIKey:       "existing-secret",
+					RequestDelay: 600 * time.Millisecond,
+				},
+			},
+		},
+	}
+	handler := NewHandler(testConfig(), store)
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	response := httptest.NewRecorder()
+	body := strings.NewReader("enabled=on&base_url=https%3A%2F%2Fnvd.example.test%2Fcves&request_delay=600ms")
+	request := httptest.NewRequest(http.MethodPost, "/sources/nvd", body)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", response.Code, response.Body.String())
+	}
+	if len(store.saved) != 1 || store.saved[0].APIKey != "existing-secret" {
+		t.Fatalf("saved settings = %#v, want existing API key retained", store.saved)
+	}
+}
+
+func TestStatusPageRejectsInvalidSourceConfiguration(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingConfigStore{}
+	handler := NewHandler(testConfig(), store)
+	mux := http.NewServeMux()
+	handler.Register(mux)
+	response := httptest.NewRecorder()
+	body := strings.NewReader("enabled=on&base_url=file%3A%2F%2F%2Ftmp%2Fnvd.json&request_delay=0s")
+	request := httptest.NewRequest(http.MethodPost, "/sources/nvd", body)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+	if len(store.saved) != 0 {
+		t.Fatalf("saved settings = %#v, want none", store.saved)
+	}
+}
+
 func TestStatusAPIReportsStoreErrors(t *testing.T) {
 	t.Parallel()
 
@@ -151,9 +257,29 @@ func testConfig() config.Config {
 
 type staticStore struct {
 	statuses []status.FeedSourceStatus
+	settings []config.SourceSettings
+	saved    []config.SourceSettings
 	err      error
 }
 
 func (s staticStore) ListFeedSourceStatus(context.Context) ([]status.FeedSourceStatus, error) {
 	return s.statuses, s.err
+}
+
+func (s staticStore) ListFeedSourceConfig(context.Context) ([]config.SourceSettings, error) {
+	return s.settings, s.err
+}
+
+func (s staticStore) UpsertFeedSourceConfig(context.Context, config.SourceSettings) error {
+	return errors.New("static store cannot save")
+}
+
+type recordingConfigStore struct {
+	staticStore
+	saved []config.SourceSettings
+}
+
+func (s *recordingConfigStore) UpsertFeedSourceConfig(_ context.Context, setting config.SourceSettings) error {
+	s.saved = append(s.saved, setting)
+	return nil
 }

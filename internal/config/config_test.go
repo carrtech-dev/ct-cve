@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	t.Setenv("CT_CVE_DATABASE_URL", "")
@@ -146,5 +149,68 @@ func TestLoadRejectsInvalidSourceConfig(t *testing.T) {
 				t.Fatal("Load returned nil error, want invalid config error")
 			}
 		})
+	}
+}
+
+func TestApplySourceSettingsOverridesEnvironmentDefaults(t *testing.T) {
+	cfg := Config{
+		Sources: SourceConfig{
+			NVD: NVDSourceConfig{
+				Enabled:      true,
+				BaseURL:      "https://nvd.example.test/cves",
+				APIKey:       "env-key",
+				RequestDelay: 6 * time.Second,
+			},
+			CISAKEV: HTTPSourceConfig{
+				Enabled: true,
+				BaseURL: "https://cisa.example.test/kev.json",
+			},
+		},
+	}
+
+	next := cfg.ApplySourceSettings([]SourceSettings{
+		{
+			Source:       "nvd",
+			Enabled:      false,
+			BaseURL:      "https://nvd.override.test/cves",
+			APIKey:       "stored-key",
+			RequestDelay: 900 * time.Millisecond,
+		},
+		{
+			Source:  "cisa-kev",
+			Enabled: false,
+			BaseURL: "https://cisa.override.test/kev.json",
+		},
+	})
+
+	if next.Sources.NVD.Enabled {
+		t.Fatal("NVD enabled after stored override, want disabled")
+	}
+	if next.Sources.NVD.BaseURL != "https://nvd.override.test/cves" {
+		t.Fatalf("NVD BaseURL = %q", next.Sources.NVD.BaseURL)
+	}
+	if next.Sources.NVD.APIKey != "stored-key" {
+		t.Fatalf("NVD APIKey = %q, want stored-key", next.Sources.NVD.APIKey)
+	}
+	if next.Sources.NVD.RequestDelay != 900*time.Millisecond {
+		t.Fatalf("NVD RequestDelay = %s, want 900ms", next.Sources.NVD.RequestDelay)
+	}
+	if next.Sources.CISAKEV.Enabled {
+		t.Fatal("CISA KEV enabled after stored override, want disabled")
+	}
+	if next.Sources.CISAKEV.BaseURL != "https://cisa.override.test/kev.json" {
+		t.Fatalf("CISA KEV BaseURL = %q", next.Sources.CISAKEV.BaseURL)
+	}
+}
+
+func TestEditableSourceValidation(t *testing.T) {
+	if _, err := ValidateHTTPURL("ftp://example.test/feed"); err == nil {
+		t.Fatal("ValidateHTTPURL accepted non-HTTP URL")
+	}
+	if _, err := ValidatePositiveDuration("0s", time.Hour); err == nil {
+		t.Fatal("ValidatePositiveDuration accepted zero duration")
+	}
+	if _, err := ValidatePositiveDuration("2h", time.Hour); err == nil {
+		t.Fatal("ValidatePositiveDuration accepted duration above max")
 	}
 }

@@ -24,6 +24,14 @@ type SourceConfig struct {
 	CISAKEV HTTPSourceConfig
 }
 
+type SourceSettings struct {
+	Source       string
+	Enabled      bool
+	BaseURL      string
+	APIKey       string
+	RequestDelay time.Duration
+}
+
 type NVDSourceConfig struct {
 	Enabled      bool
 	BaseURL      string
@@ -101,6 +109,51 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+func (cfg Config) ApplySourceSettings(settings []SourceSettings) Config {
+	next := cfg
+	for _, setting := range settings {
+		switch setting.Source {
+		case "nvd":
+			next.Sources.NVD.Enabled = setting.Enabled
+			if setting.BaseURL != "" {
+				next.Sources.NVD.BaseURL = setting.BaseURL
+			}
+			next.Sources.NVD.APIKey = setting.APIKey
+			if setting.RequestDelay > 0 {
+				next.Sources.NVD.RequestDelay = setting.RequestDelay
+			}
+		case "cisa-kev":
+			next.Sources.CISAKEV.Enabled = setting.Enabled
+			if setting.BaseURL != "" {
+				next.Sources.CISAKEV.BaseURL = setting.BaseURL
+			}
+		}
+	}
+	return next
+}
+
+func ValidateHTTPURL(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) > 2048 {
+		return "", errors.New("source URL must be 2048 characters or fewer")
+	}
+	return validateHTTPURL("source URL", trimmed)
+}
+
+func ValidatePositiveDuration(value string, max time.Duration) (time.Duration, error) {
+	parsed, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return 0, errors.New("duration must be valid")
+	}
+	if parsed <= 0 {
+		return 0, errors.New("duration must be greater than zero")
+	}
+	if max > 0 && parsed > max {
+		return 0, fmt.Errorf("duration must be no greater than %s", max)
+	}
+	return parsed, nil
+}
+
 func valueOrDefault(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -138,6 +191,10 @@ func durationFromEnv(name string, fallback time.Duration) (time.Duration, error)
 
 func httpURLFromEnv(name string, fallback string) (string, error) {
 	rawValue := valueOrDefault(os.Getenv(name), fallback)
+	return validateHTTPURL(name, rawValue)
+}
+
+func validateHTTPURL(name string, rawValue string) (string, error) {
 	parsed, err := url.Parse(rawValue)
 	if err != nil {
 		return "", fmt.Errorf("%s must be a valid URL", name)

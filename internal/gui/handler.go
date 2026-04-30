@@ -3,8 +3,11 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/carrtech-dev/ct-cve/internal/config"
@@ -13,6 +16,8 @@ import (
 
 type Store interface {
 	ListFeedSourceStatus(context.Context) ([]status.FeedSourceStatus, error)
+	ListFeedSourceConfig(context.Context) ([]config.SourceSettings, error)
+	UpsertFeedSourceConfig(context.Context, config.SourceSettings) error
 }
 
 type Handler struct {
@@ -33,6 +38,7 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.serveIndex)
 	mux.HandleFunc("/status", h.serveIndex)
 	mux.HandleFunc("/api/status", h.serveStatus)
+	mux.HandleFunc("/sources/", h.serveSourceConfig)
 }
 
 func (h Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +91,45 @@ func (h Handler) serveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h Handler) serveSourceConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	source := strings.TrimPrefix(r.URL.Path, "/sources/")
+	if source != "nvd" && source != "cisa-kev" {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid source configuration form", http.StatusBadRequest)
+		return
+	}
+
+	current, err := h.effectiveConfig(r.Context())
+	if err != nil {
+		http.Error(w, "failed to load CT-CVE source configuration", http.StatusInternalServerError)
+		return
+	}
+	setting, err := sourceSettingFromForm(source, current, r.Form)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.store.UpsertFeedSourceConfig(r.Context(), setting); err != nil {
+		http.Error(w, "failed to save CT-CVE source configuration", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/status", http.StatusSeeOther)
+}
+
 func (h Handler) overview(ctx context.Context) (Overview, error) {
+	cfg, err := h.effectiveConfig(ctx)
+	if err != nil {
+		return Overview{}, err
+	}
 	statuses, err := h.store.ListFeedSourceStatus(ctx)
 	if err != nil {
 		return Overview{}, err
@@ -99,25 +143,25 @@ func (h Handler) overview(ctx context.Context) (Overview, error) {
 			ReportingNote: "Host findings and customer-facing vulnerability reports stay in CT Ops.",
 		},
 		FeedSync: FeedSyncConfig{
-			Interval:      h.cfg.FeedSyncInterval.String(),
-			SyncOnStartup: h.cfg.FeedSyncOnStartup,
-			HTTPTimeout:   h.cfg.FeedHTTPTimeout.String(),
+			Interval:      cfg.FeedSyncInterval.String(),
+			SyncOnStartup: cfg.FeedSyncOnStartup,
+			HTTPTimeout:   cfg.FeedHTTPTimeout.String(),
 		},
 		Sources: []SourceOverview{
 			{
 				ID:               "nvd",
 				Name:             "NVD",
-				Enabled:          h.cfg.Sources.NVD.Enabled,
-				BaseURL:          h.cfg.Sources.NVD.BaseURL,
-				APIKeyConfigured: h.cfg.Sources.NVD.APIKey != "",
-				RequestDelay:     h.cfg.Sources.NVD.RequestDelay.String(),
+				Enabled:          cfg.Sources.NVD.Enabled,
+				BaseURL:          cfg.Sources.NVD.BaseURL,
+				APIKeyConfigured: cfg.Sources.NVD.APIKey != "",
+				RequestDelay:     cfg.Sources.NVD.RequestDelay.String(),
 				FeedSourceStatus: findStatus(statuses, "nvd"),
 			},
 			{
 				ID:               "cisa-kev",
 				Name:             "CISA KEV",
-				Enabled:          h.cfg.Sources.CISAKEV.Enabled,
-				BaseURL:          h.cfg.Sources.CISAKEV.BaseURL,
+				Enabled:          cfg.Sources.CISAKEV.Enabled,
+				BaseURL:          cfg.Sources.CISAKEV.BaseURL,
 				FeedSourceStatus: findStatus(statuses, "cisa-kev"),
 			},
 		},
@@ -126,6 +170,48 @@ func (h Handler) overview(ctx context.Context) (Overview, error) {
 			Note:   "CT-CVE subscription and licence validation will be supplied through the CT Ops integration.",
 		},
 	}, nil
+}
+
+func (h Handler) effectiveConfig(ctx context.Context) (config.Config, error) {
+	settings, err := h.store.ListFeedSourceConfig(ctx)
+	if err != nil {
+		return config.Config{}, err
+	}
+	return h.cfg.ApplySourceSettings(settings), nil
+}
+
+func sourceSettingFromForm(source string, cfg config.Config, values url.Values) (config.SourceSettings, error) {
+	enabled := values.Get("enabled") == "on"
+	baseURL, err := config.ValidateHTTPURL(values.Get("base_url"))
+	if err != nil {
+		return config.SourceSettings{}, err
+	}
+	setting := config.SourceSettings{
+		Source:  source,
+		Enabled: enabled,
+		BaseURL: baseURL,
+	}
+	switch source {
+	case "nvd":
+		setting.APIKey = cfg.Sources.NVD.APIKey
+		if values.Get("clear_api_key") == "on" {
+			setting.APIKey = ""
+		}
+		if newAPIKey := strings.TrimSpace(values.Get("api_key")); newAPIKey != "" {
+			if len(newAPIKey) > 256 {
+				return config.SourceSettings{}, errors.New("NVD API key must be 256 characters or fewer")
+			}
+			setting.APIKey = newAPIKey
+		}
+		requestDelay, err := config.ValidatePositiveDuration(values.Get("request_delay"), time.Hour)
+		if err != nil {
+			return config.SourceSettings{}, err
+		}
+		setting.RequestDelay = requestDelay
+	case "cisa-kev":
+		setting.APIKey = ""
+	}
+	return setting, nil
 }
 
 func findStatus(statuses []status.FeedSourceStatus, source string) *status.FeedSourceStatus {
@@ -259,6 +345,31 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
     dl { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 8px 12px; margin: 0; }
     dt { color: var(--muted); }
     dd { margin: 0; overflow-wrap: anywhere; }
+    form { display: grid; gap: 12px; margin-top: 4px; }
+    .field { display: grid; gap: 5px; }
+    .check { display: flex; align-items: center; gap: 8px; color: var(--text); }
+    input[type="url"], input[type="text"], input[type="password"] {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+    button {
+      justify-self: start;
+      border: 1px solid #0f766e;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      min-height: 36px;
+      padding: 7px 12px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
     code {
       background: #eef2f7;
       border: 1px solid var(--line);
@@ -334,6 +445,31 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
               <dt>Last error</dt>
               <dd>{{ if and .FeedSourceStatus .FeedSourceStatus.LastError }}{{ .FeedSourceStatus.LastError }}{{ else }}None{{ end }}</dd>
             </dl>
+            <form method="post" action="/sources/{{ .ID }}">
+              <label class="check">
+                <input type="checkbox" name="enabled" {{ if .Enabled }}checked{{ end }}>
+                Enabled
+              </label>
+              <label class="field">
+                <span class="label">Endpoint</span>
+                <input type="url" name="base_url" value="{{ .BaseURL }}" maxlength="2048" required>
+              </label>
+              {{ if eq .ID "nvd" }}
+                <label class="field">
+                  <span class="label">Request delay</span>
+                  <input type="text" name="request_delay" value="{{ .RequestDelay }}" maxlength="16" required>
+                </label>
+                <label class="field">
+                  <span class="label">New API key</span>
+                  <input type="password" name="api_key" value="" maxlength="256" autocomplete="off">
+                </label>
+                <label class="check">
+                  <input type="checkbox" name="clear_api_key">
+                  Clear stored API key
+                </label>
+              {{ end }}
+              <button type="submit">Save source</button>
+            </form>
           </article>
         {{ end }}
       </div>

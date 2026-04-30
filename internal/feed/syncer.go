@@ -19,12 +19,21 @@ type Store interface {
 }
 
 type Syncer struct {
-	Store   Store
-	Sources []Source
+	Store          Store
+	Sources        []Source
+	SourceProvider func(context.Context) ([]Source, error)
 }
 
 func (s Syncer) SyncOnce(ctx context.Context) error {
-	for _, source := range s.Sources {
+	sources := s.Sources
+	if s.SourceProvider != nil {
+		loaded, err := s.SourceProvider(ctx)
+		if err != nil {
+			return err
+		}
+		sources = loaded
+	}
+	for _, source := range sources {
 		if !source.Enabled() {
 			continue
 		}
