@@ -14,6 +14,8 @@ increment provides:
 - Extracted distro package version comparison and matching logic.
 - Docker and Compose definitions for local development.
 - GitHub Actions CI running the Go test suite.
+- Release automation that opens release-please PRs and publishes GHCR images
+  when releases are created.
 
 ## Local Development
 
@@ -31,6 +33,21 @@ docker compose up --build
 
 The service listens on `http://localhost:8080` by default.
 
+## Container Images
+
+Release-please manages CT-CVE GitHub releases from Conventional Commit history.
+When a release is created from `main`, GitHub Actions builds the service image
+from this repository and publishes it to GitHub Container Registry:
+
+```sh
+docker pull ghcr.io/carrtech-dev/ct-cve:v0.1.0
+docker pull ghcr.io/carrtech-dev/ct-cve:latest
+```
+
+Use a versioned tag for deployments that need reproducible rollouts. The
+`latest` tag is provided for local evaluation and follows the most recent
+published release.
+
 ## Configuration
 
 | Variable | Required | Default | Description |
@@ -43,4 +60,3 @@ The service listens on `http://localhost:8080` by default.
 This bootstrap does not yet include feed sync workers, API routes, auth, or the
 standalone GUI. Those follow as separate migration PRs so the service can grow
 behind a stable repository and CI baseline.
-
