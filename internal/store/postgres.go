@@ -8,6 +8,8 @@ import (
 	"sort"
 
 	"github.com/carrtech-dev/ct-cve/internal/feed"
+	"github.com/carrtech-dev/ct-cve/internal/status"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -205,6 +207,47 @@ func (s *PostgresStore) RecordSourceResult(ctx context.Context, result feed.Sour
 	`
 	_, err := s.pool.Exec(ctx, q, result.Source, result.Records, result.Error)
 	return err
+}
+
+func (s *PostgresStore) ListFeedSourceStatus(ctx context.Context) ([]status.FeedSourceStatus, error) {
+	const q = `
+		SELECT source, last_success_at, last_attempt_at, last_error, records_processed, updated_at
+		FROM feed_source_status
+		ORDER BY source
+	`
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var statuses []status.FeedSourceStatus
+	for rows.Next() {
+		var status status.FeedSourceStatus
+		var lastSuccessAt pgtype.Timestamptz
+		var lastAttemptAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&status.Source,
+			&lastSuccessAt,
+			&lastAttemptAt,
+			&status.LastError,
+			&status.RecordsProcessed,
+			&status.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if lastSuccessAt.Valid {
+			status.LastSuccessAt = &lastSuccessAt.Time
+		}
+		if lastAttemptAt.Valid {
+			status.LastAttemptAt = &lastAttemptAt.Time
+		}
+		statuses = append(statuses, status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return statuses, nil
 }
 
 func jsonOrEmpty(raw []byte) []byte {

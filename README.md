@@ -20,6 +20,7 @@ increment provides:
 - GitHub Actions CI running the Go test suite.
 - Release automation that opens release-please PRs and publishes GHCR images
   when releases are created.
+- A built-in operational status GUI and read-only JSON status endpoint.
 
 ## Local Development
 
@@ -36,6 +37,12 @@ docker compose up --build
 ```
 
 The service listens on `http://localhost:8080` by default.
+
+Open `http://localhost:8080/status` for the CT-CVE operational status page, or
+read `http://localhost:8080/api/status` for the same source health and
+configuration summary as JSON. The status surface is for feed configuration and
+observability only; host findings and customer-facing vulnerability reporting
+remain in CT Ops.
 
 ## Container Images
 
@@ -68,9 +75,13 @@ published release.
 | `CT_CVE_CISA_KEV_ENABLED` | No | `true` | Enables the CISA Known Exploited Vulnerabilities source. |
 | `CT_CVE_CISA_KEV_BASE_URL` | No | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | CISA KEV JSON feed URL. |
 
+The status page reports whether the NVD API key is configured, but it never
+returns the key value in HTML or JSON responses.
+
 ## Migration Status
 
 This bootstrap now includes feed sync workers for the NVD and CISA KEV catalogs,
 including persistence of CVE metadata, known-exploited CVE metadata, and source
-status. Distro advisory parser ports, API routes, auth, and the standalone GUI
-remain outstanding migration work.
+status, plus the first read-only CT-CVE status GUI/API slice. Editable source
+configuration, feed/API logs, CT-CVE subscription status from CT Ops, and the CT
+Ops connector remain outstanding migration work.
