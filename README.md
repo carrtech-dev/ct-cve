@@ -21,7 +21,7 @@ increment provides:
 - Release automation that opens release-please PRs and publishes GHCR images
   when releases are created.
 - A built-in operational status GUI, editable source configuration forms, and a
-  JSON status endpoint.
+  JSON status endpoint with recent feed/API activity logs.
 
 ## Local Development
 
@@ -49,6 +49,10 @@ The status page can enable or disable the NVD and CISA KEV sources, change
 their feed endpoints, adjust the NVD request delay, and set or clear the NVD
 API key. Saved source settings are stored in the CT-CVE database and are applied
 to the next scheduled feed sync cycle.
+
+Recent feed sync outcomes and source configuration API changes are recorded as
+operational logs and shown on the status page and JSON endpoint. Logs report
+whether an NVD API key is configured but never include the key value.
 
 ## Container Images
 
@@ -89,5 +93,5 @@ returns the key value in HTML or JSON responses.
 This bootstrap now includes feed sync workers for the NVD and CISA KEV catalogs,
 including persistence of CVE metadata, known-exploited CVE metadata, and source
 status, plus the first CT-CVE status GUI/API slice with editable source
-configuration. Feed/API logs, CT-CVE subscription status from CT Ops, and the CT
-Ops connector remain outstanding migration work.
+configuration and feed/API activity logs. CT-CVE subscription status from CT Ops
+and the CT Ops connector remain outstanding migration work.

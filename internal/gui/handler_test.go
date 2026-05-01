@@ -29,6 +29,17 @@ func TestStatusAPIExposesSourceHealthWithoutSecrets(t *testing.T) {
 				UpdatedAt:        lastSuccess,
 			},
 		},
+		logs: []status.OperationalLog{
+			{
+				ID:        99,
+				Source:    "nvd",
+				Category:  "feed",
+				Level:     "info",
+				Message:   "source sync completed",
+				Detail:    "processed 42 CVE records",
+				CreatedAt: lastSuccess,
+			},
+		},
 	})
 	handler.now = func() time.Time { return now }
 
@@ -68,6 +79,9 @@ func TestStatusAPIExposesSourceHealthWithoutSecrets(t *testing.T) {
 	if overview.Sources[0].FeedSourceStatus == nil || overview.Sources[0].FeedSourceStatus.RecordsProcessed != 42 {
 		t.Fatalf("NVD status = %#v, want persisted status", overview.Sources[0].FeedSourceStatus)
 	}
+	if len(overview.Logs) != 1 || overview.Logs[0].Message != "source sync completed" {
+		t.Fatalf("logs = %#v, want recent operational log", overview.Logs)
+	}
 }
 
 func TestStatusPageRendersOperationalOverview(t *testing.T) {
@@ -85,7 +99,7 @@ func TestStatusPageRendersOperationalOverview(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body=%s", response.Code, response.Body.String())
 	}
 	body := response.Body.String()
-	for _, want := range []string{"CT-CVE Status", "Source Health", "NVD", "CISA KEV", "pending CT Ops connector"} {
+	for _, want := range []string{"CT-CVE Status", "Source Health", "Activity Logs", "NVD", "CISA KEV", "pending CT Ops connector"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page body missing %q:\n%s", want, body)
 		}
@@ -129,6 +143,12 @@ func TestStatusPageSavesEditableSourceConfiguration(t *testing.T) {
 	}
 	if len(store.saved) != 1 {
 		t.Fatalf("saved settings length = %d, want 1", len(store.saved))
+	}
+	if len(store.logs) != 1 {
+		t.Fatalf("logs length = %d, want 1", len(store.logs))
+	}
+	if strings.Contains(store.logs[0].Detail, "new-secret") {
+		t.Fatal("source configuration log leaked the NVD API key")
 	}
 	saved := store.saved[0]
 	if saved.Source != "nvd" || !saved.Enabled {
@@ -258,6 +278,7 @@ func testConfig() config.Config {
 type staticStore struct {
 	statuses []status.FeedSourceStatus
 	settings []config.SourceSettings
+	logs     []status.OperationalLog
 	saved    []config.SourceSettings
 	err      error
 }
@@ -270,16 +291,30 @@ func (s staticStore) ListFeedSourceConfig(context.Context) ([]config.SourceSetti
 	return s.settings, s.err
 }
 
+func (s staticStore) ListOperationalLogs(context.Context, int) ([]status.OperationalLog, error) {
+	return s.logs, s.err
+}
+
 func (s staticStore) UpsertFeedSourceConfig(context.Context, config.SourceSettings) error {
+	return errors.New("static store cannot save")
+}
+
+func (s staticStore) RecordOperationalLog(context.Context, status.OperationalLog) error {
 	return errors.New("static store cannot save")
 }
 
 type recordingConfigStore struct {
 	staticStore
 	saved []config.SourceSettings
+	logs  []status.OperationalLog
 }
 
 func (s *recordingConfigStore) UpsertFeedSourceConfig(_ context.Context, setting config.SourceSettings) error {
 	s.saved = append(s.saved, setting)
+	return nil
+}
+
+func (s *recordingConfigStore) RecordOperationalLog(_ context.Context, log status.OperationalLog) error {
+	s.logs = append(s.logs, log)
 	return nil
 }
