@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.2.0...ct-cve-v0.3.0) (2026-05-01)
+
+
+### Features
+
+* **gui:** add feed api activity logs ([#12](https://github.com/carrtech-dev/ct-cve/issues/12)) ([b257a35](https://github.com/carrtech-dev/ct-cve/commit/b257a35b3279c1c6f9e2376a2f77d4cb73b06b97))
+
 ## [0.2.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.1.0...ct-cve-v0.2.0) (2026-04-30)
 
 
