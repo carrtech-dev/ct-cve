@@ -10,3 +10,13 @@ type FeedSourceStatus struct {
 	RecordsProcessed int        `json:"recordsProcessed"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
 }
+
+type OperationalLog struct {
+	ID        int64     `json:"id"`
+	Source    string    `json:"source,omitempty"`
+	Category  string    `json:"category"`
+	Level     string    `json:"level"`
+	Message   string    `json:"message"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}

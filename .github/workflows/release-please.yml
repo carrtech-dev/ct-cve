@@ -26,6 +26,7 @@ jobs:
         with:
           config-file: .github/release-please-config.json
           manifest-file: .release-please-manifest.json
+          target-branch: main
 
       - name: Check out repository
         if: ${{ steps.release.outputs.release_created }}
@@ -56,7 +57,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
       - name: Attest image provenance
-        if: ${{ steps.release.outputs.release_created }}
+        if: ${{ steps.release.outputs.release_created && !github.event.repository.private }}
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
