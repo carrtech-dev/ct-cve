@@ -17,7 +17,9 @@ import (
 type Store interface {
 	ListFeedSourceStatus(context.Context) ([]status.FeedSourceStatus, error)
 	ListFeedSourceConfig(context.Context) ([]config.SourceSettings, error)
+	ListOperationalLogs(context.Context, int) ([]status.OperationalLog, error)
 	UpsertFeedSourceConfig(context.Context, config.SourceSettings) error
+	RecordOperationalLog(context.Context, status.OperationalLog) error
 }
 
 type Handler struct {
@@ -122,6 +124,16 @@ func (h Handler) serveSourceConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to save CT-CVE source configuration", http.StatusInternalServerError)
 		return
 	}
+	if err := h.store.RecordOperationalLog(r.Context(), status.OperationalLog{
+		Source:   source,
+		Category: "api",
+		Level:    "info",
+		Message:  "source configuration updated",
+		Detail:   sourceConfigLogDetail(setting),
+	}); err != nil {
+		http.Error(w, "failed to record CT-CVE source configuration change", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/status", http.StatusSeeOther)
 }
 
@@ -131,6 +143,10 @@ func (h Handler) overview(ctx context.Context) (Overview, error) {
 		return Overview{}, err
 	}
 	statuses, err := h.store.ListFeedSourceStatus(ctx)
+	if err != nil {
+		return Overview{}, err
+	}
+	logs, err := h.store.ListOperationalLogs(ctx, 25)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -169,6 +185,7 @@ func (h Handler) overview(ctx context.Context) (Overview, error) {
 			Status: "pending CT Ops connector",
 			Note:   "CT-CVE subscription and licence validation will be supplied through the CT Ops integration.",
 		},
+		Logs: logs,
 	}, nil
 }
 
@@ -223,11 +240,30 @@ func findStatus(statuses []status.FeedSourceStatus, source string) *status.FeedS
 	return nil
 }
 
+func sourceConfigLogDetail(setting config.SourceSettings) string {
+	details := []string{"enabled=" + boolWord(setting.Enabled), "endpoint=" + setting.BaseURL}
+	if setting.Source == "nvd" {
+		details = append(details, "apiKeyConfigured="+boolWord(setting.APIKey != ""))
+		if setting.RequestDelay > 0 {
+			details = append(details, "requestDelay="+setting.RequestDelay.String())
+		}
+	}
+	return strings.Join(details, " ")
+}
+
+func boolWord(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
 type Overview struct {
-	Service      ServiceStatus      `json:"service"`
-	FeedSync     FeedSyncConfig     `json:"feedSync"`
-	Sources      []SourceOverview   `json:"sources"`
-	Subscription SubscriptionStatus `json:"subscription"`
+	Service      ServiceStatus           `json:"service"`
+	FeedSync     FeedSyncConfig          `json:"feedSync"`
+	Sources      []SourceOverview        `json:"sources"`
+	Subscription SubscriptionStatus      `json:"subscription"`
+	Logs         []status.OperationalLog `json:"logs"`
 }
 
 type ServiceStatus struct {
@@ -275,6 +311,9 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
 		if value == nil {
 			return "Never"
 		}
+		return value.UTC().Format(time.RFC3339)
+	},
+	"formatLogTime": func(value time.Time) string {
 		return value.UTC().Format(time.RFC3339)
 	},
 }).Parse(`<!doctype html>
@@ -345,6 +384,10 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
     dl { display: grid; grid-template-columns: minmax(110px, 150px) 1fr; gap: 8px 12px; margin: 0; }
     dt { color: var(--muted); }
     dd { margin: 0; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px 6px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    td { overflow-wrap: anywhere; }
     form { display: grid; gap: 12px; margin-top: 4px; }
     .field { display: grid; gap: 5px; }
     .check { display: flex; align-items: center; gap: 8px; color: var(--text); }
@@ -483,6 +526,38 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
         <dt>Note</dt>
         <dd>{{ .Subscription.Note }}</dd>
       </dl>
+    </section>
+
+    <section class="panel">
+      <h2>Activity Logs</h2>
+      {{ if .Logs }}
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Level</th>
+              <th>Category</th>
+              <th>Source</th>
+              <th>Message</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ range .Logs }}
+              <tr>
+                <td>{{ formatLogTime .CreatedAt }}</td>
+                <td>{{ .Level }}</td>
+                <td>{{ .Category }}</td>
+                <td>{{ if .Source }}{{ .Source }}{{ else }}-{{ end }}</td>
+                <td>{{ .Message }}</td>
+                <td>{{ if .Detail }}{{ .Detail }}{{ else }}-{{ end }}</td>
+              </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      {{ else }}
+        <p class="subhead">No feed or API activity has been recorded yet.</p>
+      {{ end }}
     </section>
 
     <section class="panel">
