@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/carrtech-dev/ct-cve/internal/config"
@@ -195,6 +196,12 @@ func (s *PostgresStore) upsertCVERecord(ctx context.Context, record feed.CVEReco
 }
 
 func (s *PostgresStore) RecordSourceResult(ctx context.Context, result feed.SourceResult) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	const q = `
 		INSERT INTO feed_source_status (
 			source, last_success_at, last_attempt_at, last_error, records_processed, updated_at
@@ -207,8 +214,27 @@ func (s *PostgresStore) RecordSourceResult(ctx context.Context, result feed.Sour
 			records_processed = EXCLUDED.records_processed,
 			updated_at = NOW()
 	`
-	_, err := s.pool.Exec(ctx, q, result.Source, result.Records, result.Error)
-	return err
+	if _, err := tx.Exec(ctx, q, result.Source, result.Records, result.Error); err != nil {
+		return err
+	}
+
+	level := "info"
+	message := "source sync completed"
+	detail := ""
+	if result.Error != "" {
+		level = "error"
+		message = "source sync failed"
+		detail = result.Error
+	} else {
+		detail = "processed " + strconv.Itoa(result.Records) + " CVE records"
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO operational_logs (source, category, level, message, detail)
+		VALUES ($1, 'feed', $2, $3, $4)
+	`, result.Source, level, message, detail); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) ListFeedSourceStatus(ctx context.Context) ([]status.FeedSourceStatus, error) {
@@ -314,6 +340,53 @@ func (s *PostgresStore) UpsertFeedSourceConfig(ctx context.Context, setting conf
 		delayMS,
 	)
 	return err
+}
+
+func (s *PostgresStore) RecordOperationalLog(ctx context.Context, log status.OperationalLog) error {
+	const q = `
+		INSERT INTO operational_logs (source, category, level, message, detail)
+		VALUES ($1,$2,$3,$4,$5)
+	`
+	_, err := s.pool.Exec(ctx, q, log.Source, log.Category, log.Level, log.Message, log.Detail)
+	return err
+}
+
+func (s *PostgresStore) ListOperationalLogs(ctx context.Context, limit int) ([]status.OperationalLog, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	const q = `
+		SELECT id, source, category, level, message, detail, created_at
+		FROM operational_logs
+		ORDER BY created_at DESC, id DESC
+		LIMIT $1
+	`
+	rows, err := s.pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []status.OperationalLog
+	for rows.Next() {
+		var log status.OperationalLog
+		if err := rows.Scan(
+			&log.ID,
+			&log.Source,
+			&log.Category,
+			&log.Level,
+			&log.Message,
+			&log.Detail,
+			&log.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 func jsonOrEmpty(raw []byte) []byte {
