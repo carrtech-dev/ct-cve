@@ -16,7 +16,14 @@ env:
 
 jobs:
   release:
+    # Runs on a GitHub-hosted runner: release-please makes many GitHub API
+    # calls while walking release history, and ct-ops keeps this class of job
+    # hosted to avoid self-hosted runner network instability affecting release
+    # PR creation.
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - name: Create release
         id: release
@@ -26,16 +33,26 @@ jobs:
           manifest-file: .release-please-manifest.json
           target-branch: main
 
+  publish-image:
+    needs: release
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Reset workspace ownership
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine \
+            chown -R $(id -u):$(id -g) /ws 2>/dev/null || true
+
       - name: Check out repository
-        if: ${{ steps.release.outputs.release_created }}
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        if: ${{ steps.release.outputs.release_created }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: ${{ steps.release.outputs.release_created }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -43,7 +60,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and publish image
-        if: ${{ steps.release.outputs.release_created }}
         id: publish
         uses: docker/build-push-action@v6
         with:
@@ -51,5 +67,16 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.release.outputs.tag_name }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.tag_name }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Clean up runner workspace
+        if: always()
+        run: |
+          set +e
+          docker run --rm -v "$GITHUB_WORKSPACE:/ws" alpine \
+            chown -R "$(id -u):$(id -g)" /ws 2>/dev/null || true
+          find "$GITHUB_WORKSPACE" -mindepth 1 -delete 2>/dev/null || true
+          docker buildx prune -f --filter "until=1h" 2>/dev/null || true
+          docker system prune -f --filter "until=1h" 2>/dev/null || true
+          exit 0
