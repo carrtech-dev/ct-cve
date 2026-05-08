@@ -84,6 +84,32 @@ Use a versioned tag for deployments that need reproducible rollouts. The
 `latest` tag is provided for local evaluation and follows the most recent
 published release.
 
+## Customer Install Bundle
+
+Each GitHub release also publishes a downloadable `ct-cve-single.zip` bundle
+for single-host customer installs. Unzip it on a host with Docker and run:
+
+```sh
+unzip ct-cve-single.zip
+cd ct-cve
+./start.sh
+```
+
+The bundle includes `docker-compose.yml`, `.env.example`, `start.sh`, and
+`upgrade.sh`. On first run, `start.sh` creates `.env`, generates a local
+PostgreSQL password, starts the database and CT-CVE containers, and waits for
+the service health check. CT-CVE applies embedded database migrations during
+startup before the health check succeeds.
+
+To upgrade an existing install, run:
+
+```sh
+./upgrade.sh
+```
+
+The upgrade helper backs up local install files, preserves `.env`, replaces the
+bundle-managed files, and restarts CT-CVE unless `--no-start` is passed.
+
 ## Configuration
 
 | Variable | Required | Default | Description |

@@ -33,3 +33,9 @@ jobs:
             chown -R "$(id -u):$(id -g)" /ws 2>/dev/null || true
           find "$GITHUB_WORKSPACE" -mindepth 1 -delete 2>/dev/null || true
           exit 0
+
+  customer-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash deploy/scripts/test-customer-bundle.sh

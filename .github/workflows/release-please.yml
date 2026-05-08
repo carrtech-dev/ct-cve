@@ -40,6 +40,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image_digest: ${{ steps.publish.outputs.digest }}
     steps:
       - name: Reset workspace ownership
         run: |
@@ -80,3 +82,35 @@ jobs:
           docker buildx prune -f --filter "until=1h" 2>/dev/null || true
           docker system prune -f --filter "until=1h" 2>/dev/null || true
           exit 0
+
+  customer-bundle:
+    needs:
+      - release
+      - publish-image
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Package customer install bundle
+        run: |
+          set -euo pipefail
+          TAG_NAME="${{ needs.release.outputs.tag_name }}"
+          VERSION="${TAG_NAME#ct-cve-}"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.publish-image.outputs.image_digest }}"
+          bash deploy/scripts/package-customer-bundle.sh dist "$VERSION" "$IMAGE_REF"
+
+      - name: Upload customer install bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+        run: |
+          gh release upload "$TAG_NAME" \
+            dist/ct-cve-single-*.zip \
+            dist/ct-cve-single-*.zip.sha256 \
+            dist/ct-cve-single.zip \
+            dist/ct-cve-single.zip.sha256 \
+            --clobber
