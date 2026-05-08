@@ -22,6 +22,7 @@ cd "$SCRIPT_DIR"
 DOCS_URL="https://github.com/carrtech-dev/ct-cve"
 SUPPORT_URL="https://github.com/carrtech-dev/ct-cve/issues"
 REQUIRED_FILES=(docker-compose.yml .env.example start.sh upgrade.sh)
+DOCKER_CMD=(docker)
 
 show_help() {
   cat <<EOF
@@ -82,11 +83,28 @@ require_docker() {
     echo "Install Docker Engine 24+ with the Compose plugin: https://docs.docker.com/engine/install/" >&2
     exit 1
   fi
+
+  if docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(docker)
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(sudo docker)
+    echo "Docker requires elevated privileges on this host; using sudo for Docker commands."
+    return 0
+  fi
+
   if ! docker compose version >/dev/null 2>&1; then
     echo "ERROR: 'docker compose' plugin not found." >&2
     echo "Upgrade Docker Engine to a release that bundles the Compose plugin." >&2
     exit 1
   fi
+
+  echo "ERROR: Docker is installed, but this user cannot access the Docker daemon." >&2
+  echo "Run this script as a user with Docker access, or run it with sudo." >&2
+  echo "Original Docker error:" >&2
+  docker info >/dev/null
 }
 
 check_bundle_files() {
@@ -167,7 +185,7 @@ wait_for_health() {
 
   echo "Waiting for CT-CVE health check; database migrations run automatically during startup..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if docker compose exec -T ct-cve wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+    if "${DOCKER_CMD[@]}" compose exec -T ct-cve wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -176,7 +194,7 @@ wait_for_health() {
   echo "" >&2
   echo "ERROR: CT-CVE did not become healthy after startup." >&2
   echo "Recent logs:" >&2
-  docker compose logs --tail 80 ct-cve ct-cve-db || true
+  "${DOCKER_CMD[@]}" compose logs --tail 80 ct-cve ct-cve-db || true
   exit 1
 }
 
@@ -186,21 +204,21 @@ start_stack() {
   check_env
 
   echo "Pulling CT-CVE images from GHCR..."
-  if ! docker compose pull ct-cve ct-cve-db; then
+  if ! "${DOCKER_CMD[@]}" compose pull ct-cve ct-cve-db; then
     echo "" >&2
     echo "ERROR: failed to pull CT-CVE images." >&2
-    echo "Check network access to ghcr.io, or verify CT_CVE_IMAGE in .env." >&2
+    echo "Check Docker daemon access, network access to ghcr.io and Docker Hub, or verify CT_CVE_IMAGE in .env." >&2
     exit 1
   fi
 
-  docker compose down --remove-orphans >/dev/null 2>&1 || true
+  "${DOCKER_CMD[@]}" compose down --remove-orphans >/dev/null 2>&1 || true
 
   echo "Starting CT-CVE..."
-  if ! docker compose up -d; then
+  if ! "${DOCKER_CMD[@]}" compose up -d; then
     echo "" >&2
     echo "ERROR: 'docker compose up' failed." >&2
     echo "Recent logs:" >&2
-    docker compose logs --tail 80 || true
+    "${DOCKER_CMD[@]}" compose logs --tail 80 || true
     exit 1
   fi
 
@@ -215,13 +233,13 @@ start_stack() {
 stop_stack() {
   require_docker
   echo "Stopping CT-CVE..."
-  docker compose down
+  "${DOCKER_CMD[@]}" compose down
   echo "Stopped. Database volume data is preserved."
 }
 
 tail_logs() {
   require_docker
-  exec docker compose logs -f --tail 100
+  exec "${DOCKER_CMD[@]}" compose logs -f --tail 100
 }
 
 if [ "$#" -eq 0 ]; then
