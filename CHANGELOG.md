@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.5.0...ct-cve-v0.6.0) (2026-05-08)
+
+
+### Features
+
+* **release:** add customer install bundle ([dc6ed5b](https://github.com/carrtech-dev/ct-cve/commit/dc6ed5b2d661242d4edeba4695915b6a457c071e))
+
 ## [0.5.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.4.0...ct-cve-v0.5.0) (2026-05-08)
 
 
