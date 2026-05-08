@@ -22,6 +22,8 @@ increment provides:
   when releases are created.
 - A built-in operational status GUI, editable source configuration forms, and a
   JSON status endpoint with recent feed/API activity logs.
+- A CT Ops connector API that accepts signed inventory snapshots, matches
+  installed packages, and delivers signed finding batches back to CT Ops.
 
 ## Local Development
 
@@ -54,6 +56,13 @@ Recent feed sync outcomes and source configuration API changes are recorded as
 operational logs and shown on the status page and JSON endpoint. Logs report
 whether an NVD API key is configured but never include the key value.
 
+CT Ops pushes inventory to CT-CVE at
+`POST /api/v1/ct-ops/inventory-snapshots`. CT-CVE verifies the signed service
+request, stores the org-scoped host and software inventory, immediately matches
+active packages against the persisted vulnerability catalog, and posts finding
+batches back to CT Ops at
+`/api/integrations/ct-cve/v1/finding-batches`.
+
 ## Container Images
 
 Release-please manages CT-CVE GitHub releases from Conventional Commit history.
@@ -84,14 +93,45 @@ published release.
 | `CT_CVE_NVD_REQUEST_DELAY` | No | `6s` without an API key, `600ms` with an API key | Minimum delay between NVD API requests. |
 | `CT_CVE_CISA_KEV_ENABLED` | No | `true` | Enables the CISA Known Exploited Vulnerabilities source. |
 | `CT_CVE_CISA_KEV_BASE_URL` | No | `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | CISA KEV JSON feed URL. |
+| `CT_CVE_CT_OPS_CONNECTIONS` | No | `[]` | JSON array of CT Ops connector definitions with org-scoped inbound inventory tokens and outbound CT Ops callback token. |
 
 The status page reports whether the NVD API key is configured, but it never
 returns the key value in HTML or JSON responses.
+
+Example CT Ops connector configuration:
+
+```json
+[
+  {
+    "name": "Primary CT Ops",
+    "orgId": "org_123",
+    "ctOpsBaseUrl": "https://ctops.example.com",
+    "inventoryTokens": [
+      {
+        "id": "ctops-inventory",
+        "secret": "replace-with-at-least-32-bytes-of-secret",
+        "scopes": ["inventory:write", "connection:read"]
+      }
+    ],
+    "ctOpsToken": {
+      "id": "ctcve-outbound",
+      "secret": "replace-with-at-least-32-bytes-of-secret",
+      "scopes": ["findings:write", "connection:read"]
+    }
+  }
+]
+```
+
+The same HMAC request-signing contract is used in both directions:
+`Authorization: CT-ServiceToken <token-id>`, `X-CT-Timestamp`, `X-CT-Nonce`,
+`X-CT-Content-SHA256`, and `X-CT-Signature: v1=<base64url-hmac-sha256>`.
 
 ## Migration Status
 
 This bootstrap now includes feed sync workers for the NVD and CISA KEV catalogs,
 including persistence of CVE metadata, known-exploited CVE metadata, and source
 status, plus the first CT-CVE status GUI/API slice with editable source
-configuration and feed/API activity logs. CT-CVE subscription status from CT Ops
-and the CT Ops connector remain outstanding migration work.
+configuration and feed/API activity logs. The first CT Ops connector path is
+implemented for signed inventory ingestion, immediate matching, and signed
+finding delivery. CT-CVE subscription status from CT Ops remains outstanding
+migration work.
