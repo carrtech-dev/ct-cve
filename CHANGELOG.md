@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.3.0...ct-cve-v0.4.0) (2026-05-08)
+
+
+### Features
+
+* **ctops:** add CT Ops inventory connector ([#21](https://github.com/carrtech-dev/ct-cve/issues/21)) ([3b098c7](https://github.com/carrtech-dev/ct-cve/commit/3b098c7598af539c5bbfd64641137e2616224a66))
+
 ## [0.3.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.2.0...ct-cve-v0.3.0) (2026-05-01)
 
 
