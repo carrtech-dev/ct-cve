@@ -47,6 +47,12 @@ configuration summary as JSON. The status surface is for feed configuration and
 observability only; host findings and customer-facing vulnerability reporting
 remain in CT Ops.
 
+The first time the status page is opened, CT-CVE redirects to `/signup` so the
+initial Admin user can be created. After that user exists, `/signup` is no
+longer available and unauthenticated users are redirected to `/login`. Sessions
+are stored server-side, protected with an `HttpOnly` same-site cookie, and
+configuration changes require a per-session CSRF token.
+
 The status page can enable or disable the NVD and CISA KEV sources, change
 their feed endpoints, adjust the NVD request delay, and set or clear the NVD
 API key. Saved source settings are stored in the CT-CVE database and are applied
