@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.6.0...ct-cve-v0.6.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **customer-bundle:** fall back to sudo docker ([74f318f](https://github.com/carrtech-dev/ct-cve/commit/74f318f85566fb519e1a37e8b86d6ed9545a7476))
+
 ## [0.6.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.5.0...ct-cve-v0.6.0) (2026-05-08)
 
 
