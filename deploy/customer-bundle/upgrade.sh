@@ -19,6 +19,7 @@ cd "$SCRIPT_DIR"
 FROM_ZIP=""
 START_AFTER_UPGRADE=true
 VERSION_OVERRIDE="${CT_CVE_VERSION:-}"
+DOCKER_CMD=(docker)
 
 show_help() {
   cat <<EOF
@@ -99,10 +100,27 @@ require_existing_bundle() {
 
 require_docker() {
   need docker
+
+  if docker compose version >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(docker)
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo docker compose version >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(sudo docker)
+    echo "Docker requires elevated privileges on this host; using sudo for Docker commands."
+    return 0
+  fi
+
   if ! docker compose version >/dev/null 2>&1; then
     echo "ERROR: 'docker compose' plugin not found." >&2
     exit 1
   fi
+
+  echo "ERROR: Docker is installed, but this user cannot access the Docker daemon." >&2
+  echo "Run this script as a user with Docker access, or run it with sudo." >&2
+  echo "Original Docker error:" >&2
+  docker info >/dev/null
 }
 
 normalize_tag() {
@@ -225,7 +243,7 @@ unpack_new_bundle() {
 
 stop_stack() {
   echo "Stopping CT-CVE stack; named volumes are preserved..."
-  docker compose down --remove-orphans >/dev/null 2>&1 || true
+  "${DOCKER_CMD[@]}" compose down --remove-orphans >/dev/null 2>&1 || true
 }
 
 upsert_env_var() {

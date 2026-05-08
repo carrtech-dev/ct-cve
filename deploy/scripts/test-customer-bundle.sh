@@ -38,6 +38,9 @@ write_mock_docker() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "${MOCK_DOCKER_LOG}"
+if [ "${1:-}" = "info" ]; then
+  exit 0
+fi
 if [ "${1:-}" != "compose" ]; then
   echo "unexpected docker command: $*" >&2
   exit 1
