@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.4.0...ct-cve-v0.5.0) (2026-05-08)
+
+
+### Features
+
+* **gui:** require authentication for configuration ([70de71c](https://github.com/carrtech-dev/ct-cve/commit/70de71c10296b2ba88ad5a7b6586b9ca18eab2b3))
+
 ## [0.4.0](https://github.com/carrtech-dev/ct-cve/compare/ct-cve-v0.3.0...ct-cve-v0.4.0) (2026-05-08)
 
 
