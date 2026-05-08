@@ -3,15 +3,18 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
 
+	"github.com/carrtech-dev/ct-cve/internal/auth"
 	"github.com/carrtech-dev/ct-cve/internal/config"
 	"github.com/carrtech-dev/ct-cve/internal/feed"
 	"github.com/carrtech-dev/ct-cve/internal/status"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -387,6 +390,94 @@ func (s *PostgresStore) ListOperationalLogs(ctx context.Context, limit int) ([]s
 		return nil, err
 	}
 	return logs, nil
+}
+
+func (s *PostgresStore) CountUsers(ctx context.Context) (int, error) {
+	var count int
+	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM gui_users`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *PostgresStore) CreateUser(ctx context.Context, user auth.NewUser) (auth.User, error) {
+	const q = `
+		INSERT INTO gui_users (username, password_hash, role)
+		SELECT $1, $2, $3
+		WHERE NOT EXISTS (SELECT 1 FROM gui_users)
+		RETURNING id, username, password_hash, role, created_at
+	`
+	var created auth.User
+	if err := s.pool.QueryRow(ctx, q, user.Username, user.PasswordHash, user.Role).Scan(
+		&created.ID,
+		&created.Username,
+		&created.PasswordHash,
+		&created.Role,
+		&created.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.User{}, auth.ErrUserExists
+		}
+		return auth.User{}, err
+	}
+	return created, nil
+}
+
+func (s *PostgresStore) FindUserByUsername(ctx context.Context, username string) (auth.User, error) {
+	const q = `
+		SELECT id, username, password_hash, role, created_at
+		FROM gui_users
+		WHERE username = $1
+	`
+	var user auth.User
+	if err := s.pool.QueryRow(ctx, q, username).Scan(
+		&user.ID,
+		&user.Username,
+		&user.PasswordHash,
+		&user.Role,
+		&user.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.User{}, auth.ErrUserNotFound
+		}
+		return auth.User{}, err
+	}
+	return user, nil
+}
+
+func (s *PostgresStore) CreateSession(ctx context.Context, session auth.NewSession) error {
+	const q = `
+		INSERT INTO gui_sessions (token_hash, user_id, csrf_token, expires_at)
+		VALUES ($1,$2,$3,$4)
+	`
+	_, err := s.pool.Exec(ctx, q, session.TokenHash, session.UserID, session.CSRFToken, session.ExpiresAt)
+	return err
+}
+
+func (s *PostgresStore) FindSession(ctx context.Context, tokenHash string, now time.Time) (auth.Session, error) {
+	const q = `
+		SELECT token_hash, user_id, csrf_token, expires_at
+		FROM gui_sessions
+		WHERE token_hash = $1 AND expires_at > $2
+	`
+	var session auth.Session
+	if err := s.pool.QueryRow(ctx, q, tokenHash, now).Scan(
+		&session.TokenHash,
+		&session.UserID,
+		&session.CSRFToken,
+		&session.ExpiresAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return auth.Session{}, auth.ErrSessionNotFound
+		}
+		return auth.Session{}, err
+	}
+	return session, nil
+}
+
+func (s *PostgresStore) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM gui_sessions WHERE token_hash = $1`, tokenHash)
+	return err
 }
 
 func jsonOrEmpty(raw []byte) []byte {

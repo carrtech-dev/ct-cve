@@ -2,6 +2,7 @@ package gui
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -10,8 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/carrtech-dev/ct-cve/internal/auth"
 	"github.com/carrtech-dev/ct-cve/internal/config"
 	"github.com/carrtech-dev/ct-cve/internal/status"
+)
+
+const (
+	sessionCookieName = "ct_cve_session"
+	sessionDuration   = 12 * time.Hour
 )
 
 type Store interface {
@@ -20,6 +27,12 @@ type Store interface {
 	ListOperationalLogs(context.Context, int) ([]status.OperationalLog, error)
 	UpsertFeedSourceConfig(context.Context, config.SourceSettings) error
 	RecordOperationalLog(context.Context, status.OperationalLog) error
+	CountUsers(context.Context) (int, error)
+	CreateUser(context.Context, auth.NewUser) (auth.User, error)
+	FindUserByUsername(context.Context, string) (auth.User, error)
+	CreateSession(context.Context, auth.NewSession) error
+	FindSession(context.Context, string, time.Time) (auth.Session, error)
+	DeleteSession(context.Context, string) error
 }
 
 type Handler struct {
@@ -41,6 +54,9 @@ func (h Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/status", h.serveIndex)
 	mux.HandleFunc("/api/status", h.serveStatus)
 	mux.HandleFunc("/sources/", h.serveSourceConfig)
+	mux.HandleFunc("/signup", h.serveSignup)
+	mux.HandleFunc("/login", h.serveLogin)
+	mux.HandleFunc("/logout", h.serveLogout)
 }
 
 func (h Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +70,11 @@ func (h Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	overview, err := h.overview(r.Context())
+	session, ok := h.requireSession(w, r)
+	if !ok {
+		return
+	}
+	overview, err := h.overview(r.Context(), session)
 	if err != nil {
 		http.Error(w, "failed to load CT-CVE status", http.StatusInternalServerError)
 		return
@@ -76,7 +96,11 @@ func (h Handler) serveStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	overview, err := h.overview(r.Context())
+	session, ok := h.requireSession(w, r)
+	if !ok {
+		return
+	}
+	overview, err := h.overview(r.Context(), session)
 	if err != nil {
 		http.Error(w, "failed to load CT-CVE status", http.StatusInternalServerError)
 		return
@@ -99,6 +123,10 @@ func (h Handler) serveSourceConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	session, ok := h.requireSession(w, r)
+	if !ok {
+		return
+	}
 	source := strings.TrimPrefix(r.URL.Path, "/sources/")
 	if source != "nvd" && source != "cisa-kev" {
 		http.NotFound(w, r)
@@ -107,6 +135,10 @@ func (h Handler) serveSourceConfig(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid source configuration form", http.StatusBadRequest)
+		return
+	}
+	if !validCSRF(r.Form.Get("csrf_token"), session.CSRFToken) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
 
@@ -137,7 +169,143 @@ func (h Handler) serveSourceConfig(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/status", http.StatusSeeOther)
 }
 
-func (h Handler) overview(ctx context.Context) (Overview, error) {
+func (h Handler) serveSignup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead+", "+http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	users, err := h.store.CountUsers(r.Context())
+	if err != nil {
+		http.Error(w, "failed to load CT-CVE users", http.StatusInternalServerError)
+		return
+	}
+	if users > 0 {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.renderAuthPage(w, r, authPageData{
+			Title:       "Create Admin User",
+			Action:      "/signup",
+			ButtonLabel: "Create admin",
+		})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid signup form", http.StatusBadRequest)
+		return
+	}
+	username := auth.NormalizeUsername(r.Form.Get("username"))
+	if err := auth.ValidateUsername(username); err != nil {
+		h.renderAuthPageWithStatus(w, http.StatusBadRequest, authPageData{Title: "Create Admin User", Action: "/signup", ButtonLabel: "Create admin", Error: err.Error()})
+		return
+	}
+	passwordHash, err := auth.HashPassword(r.Form.Get("password"))
+	if err != nil {
+		h.renderAuthPageWithStatus(w, http.StatusBadRequest, authPageData{Title: "Create Admin User", Action: "/signup", ButtonLabel: "Create admin", Error: err.Error()})
+		return
+	}
+	user, err := h.store.CreateUser(r.Context(), auth.NewUser{Username: username, PasswordHash: passwordHash, Role: auth.RoleAdmin})
+	if err != nil {
+		if errors.Is(err, auth.ErrUserExists) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "failed to create CT-CVE admin user", http.StatusInternalServerError)
+		return
+	}
+	if err := h.createSession(w, r, user.ID); err != nil {
+		http.Error(w, "failed to create CT-CVE session", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/status", http.StatusSeeOther)
+}
+
+func (h Handler) serveLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead+", "+http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	users, err := h.store.CountUsers(r.Context())
+	if err != nil {
+		http.Error(w, "failed to load CT-CVE users", http.StatusInternalServerError)
+		return
+	}
+	if users == 0 {
+		http.Redirect(w, r, "/signup", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		h.renderAuthPage(w, r, authPageData{
+			Title:       "Sign In",
+			Action:      "/login",
+			ButtonLabel: "Sign in",
+		})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid login form", http.StatusBadRequest)
+		return
+	}
+	username := auth.NormalizeUsername(r.Form.Get("username"))
+	user, err := h.store.FindUserByUsername(r.Context(), username)
+	if err != nil {
+		if !errors.Is(err, auth.ErrUserNotFound) {
+			http.Error(w, "failed to load CT-CVE user", http.StatusInternalServerError)
+			return
+		}
+		h.renderAuthPageWithStatus(w, http.StatusUnauthorized, authPageData{
+			Title:       "Sign In",
+			Action:      "/login",
+			ButtonLabel: "Sign in",
+			Error:       "Invalid username or password.",
+		})
+		return
+	}
+	if !auth.CheckPassword(user.PasswordHash, r.Form.Get("password")) {
+		h.renderAuthPageWithStatus(w, http.StatusUnauthorized, authPageData{
+			Title:       "Sign In",
+			Action:      "/login",
+			ButtonLabel: "Sign in",
+			Error:       "Invalid username or password.",
+		})
+		return
+	}
+	if err := h.createSession(w, r, user.ID); err != nil {
+		http.Error(w, "failed to create CT-CVE session", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/status", http.StatusSeeOther)
+}
+
+func (h Handler) serveLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session, ok := h.currentSession(r)
+	if !ok {
+		clearSessionCookie(w, r)
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if !validCSRF(r.FormValue("csrf_token"), session.CSRFToken) {
+		http.Error(w, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	_ = h.store.DeleteSession(r.Context(), session.TokenHash)
+	clearSessionCookie(w, r)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func (h Handler) overview(ctx context.Context, session auth.Session) (Overview, error) {
 	cfg, err := h.effectiveConfig(ctx)
 	if err != nil {
 		return Overview{}, err
@@ -185,8 +353,102 @@ func (h Handler) overview(ctx context.Context) (Overview, error) {
 			Status: "pending CT Ops connector",
 			Note:   "CT-CVE subscription and licence validation will be supplied through the CT Ops integration.",
 		},
-		Logs: logs,
+		Logs:      logs,
+		CSRFToken: session.CSRFToken,
 	}, nil
+}
+
+func (h Handler) requireSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
+	session, ok := h.currentSession(r)
+	if ok {
+		return session, true
+	}
+	users, err := h.store.CountUsers(r.Context())
+	if err != nil {
+		http.Error(w, "failed to load CT-CVE users", http.StatusInternalServerError)
+		return auth.Session{}, false
+	}
+	if users == 0 {
+		http.Redirect(w, r, "/signup", http.StatusSeeOther)
+		return auth.Session{}, false
+	}
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	return auth.Session{}, false
+}
+
+func (h Handler) currentSession(r *http.Request) (auth.Session, bool) {
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return auth.Session{}, false
+	}
+	session, err := h.store.FindSession(r.Context(), auth.HashSessionToken(cookie.Value), h.now())
+	if err != nil {
+		return auth.Session{}, false
+	}
+	return session, true
+}
+
+func (h Handler) createSession(w http.ResponseWriter, r *http.Request, userID int64) error {
+	sessionToken, err := auth.NewSessionToken()
+	if err != nil {
+		return err
+	}
+	csrfToken, err := auth.NewCSRFToken()
+	if err != nil {
+		return err
+	}
+	expiresAt := h.now().Add(sessionDuration)
+	if err := h.store.CreateSession(r.Context(), auth.NewSession{
+		TokenHash: auth.HashSessionToken(sessionToken),
+		UserID:    userID,
+		CSRFToken: csrfToken,
+		ExpiresAt: expiresAt,
+	}); err != nil {
+		return err
+	}
+	http.SetCookie(w, sessionCookie(r, sessionToken, int(sessionDuration/time.Second)))
+	return nil
+}
+
+func sessionCookie(r *http.Request, value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    value,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
+func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, sessionCookie(r, "", -1))
+}
+
+func validCSRF(got, want string) bool {
+	if got == "" || want == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+func (h Handler) renderAuthPage(w http.ResponseWriter, r *http.Request, data authPageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.Method == http.MethodHead {
+		return
+	}
+	if err := authTemplate.Execute(w, data); err != nil {
+		http.Error(w, "failed to render CT-CVE authentication page", http.StatusInternalServerError)
+	}
+}
+
+func (h Handler) renderAuthPageWithStatus(w http.ResponseWriter, statusCode int, data authPageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(statusCode)
+	if err := authTemplate.Execute(w, data); err != nil {
+		http.Error(w, "failed to render CT-CVE authentication page", http.StatusInternalServerError)
+	}
 }
 
 func (h Handler) effectiveConfig(ctx context.Context) (config.Config, error) {
@@ -264,6 +526,7 @@ type Overview struct {
 	Sources      []SourceOverview        `json:"sources"`
 	Subscription SubscriptionStatus      `json:"subscription"`
 	Logs         []status.OperationalLog `json:"logs"`
+	CSRFToken    string                  `json:"-"`
 }
 
 type ServiceStatus struct {
@@ -292,6 +555,13 @@ type SourceOverview struct {
 type SubscriptionStatus struct {
 	Status string `json:"status"`
 	Note   string `json:"note"`
+}
+
+type authPageData struct {
+	Title       string
+	Action      string
+	ButtonLabel string
+	Error       string
 }
 
 var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
@@ -413,6 +683,7 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
       font-weight: 650;
       cursor: pointer;
     }
+    .top-actions { margin-top: 16px; }
     code {
       background: #eef2f7;
       border: 1px solid var(--line);
@@ -489,6 +760,7 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
               <dd>{{ if and .FeedSourceStatus .FeedSourceStatus.LastError }}{{ .FeedSourceStatus.LastError }}{{ else }}None{{ end }}</dd>
             </dl>
             <form method="post" action="/sources/{{ .ID }}">
+              <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
               <label class="check">
                 <input type="checkbox" name="enabled" {{ if .Enabled }}checked{{ end }}>
                 Enabled
@@ -564,6 +836,99 @@ var pageTemplate = template.Must(template.New("status").Funcs(template.FuncMap{
       <h2>API</h2>
       <p class="subhead">Read-only status is available at <a href="/api/status">/api/status</a>.</p>
     </section>
+    <form class="top-actions" method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+      <button type="submit">Sign out</button>
+    </form>
+  </main>
+</body>
+</html>`))
+
+var authTemplate = template.Must(template.New("auth").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Title }} - CT-CVE</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #52606d;
+      --line: #d9e2ec;
+      --accent: #0f766e;
+      --error: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 24px;
+    }
+    main {
+      width: min(100%, 420px);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    h1, p { margin: 0; }
+    h1 { font-size: 26px; letter-spacing: 0; }
+    .subhead { color: var(--muted); margin-top: 6px; }
+    form { display: grid; gap: 14px; margin-top: 22px; }
+    label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    input {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      color: var(--text);
+      background: #fff;
+    }
+    button {
+      justify-self: start;
+      border: 1px solid #0f766e;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      min-height: 38px;
+      padding: 8px 13px;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    .error {
+      margin-top: 14px;
+      color: var(--error);
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{{ .Title }}</h1>
+    <p class="subhead">CT-CVE configuration access</p>
+    {{ if .Error }}<p class="error">{{ .Error }}</p>{{ end }}
+    <form method="post" action="{{ .Action }}">
+      <label>
+        Username
+        <input type="text" name="username" maxlength="64" autocomplete="username" required autofocus>
+      </label>
+      <label>
+        Password
+        <input type="password" name="password" maxlength="1024" autocomplete="{{ if eq .Action "/signup" }}new-password{{ else }}current-password{{ end }}" required>
+      </label>
+      <button type="submit">{{ .ButtonLabel }}</button>
+    </form>
   </main>
 </body>
 </html>`))
