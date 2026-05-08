@@ -10,6 +10,7 @@ services:
       CT_CVE_NVD_ENABLED: "true"
       CT_CVE_NVD_REQUEST_DELAY: 6s
       CT_CVE_CISA_KEV_ENABLED: "true"
+      CT_CVE_CT_OPS_CONNECTIONS: "[]"
     ports:
       - "8080:8080"
     depends_on:

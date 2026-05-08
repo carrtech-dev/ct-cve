@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -8,7 +9,26 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/carrtech-dev/ct-cve/internal/ctops"
 )
+
+const serviceTokenMinBytes = 32
+
+type rawCTOpsConnection struct {
+	Name            string                 `json:"name"`
+	OrgID           string                 `json:"orgId"`
+	CTOpsBaseURL    string                 `json:"ctOpsBaseUrl"`
+	InventoryTokens []rawCTOpsServiceToken `json:"inventoryTokens"`
+	CTOpsToken      rawCTOpsServiceToken   `json:"ctOpsToken"`
+}
+
+type rawCTOpsServiceToken struct {
+	ID      string   `json:"id"`
+	Secret  string   `json:"secret"`
+	Scopes  []string `json:"scopes"`
+	Revoked bool     `json:"revoked"`
+}
 
 type Config struct {
 	HTTPAddr          string
@@ -17,6 +37,7 @@ type Config struct {
 	FeedSyncOnStartup bool
 	FeedHTTPTimeout   time.Duration
 	Sources           SourceConfig
+	CTOpsConnections  []ctops.Connection
 }
 
 type SourceConfig struct {
@@ -83,6 +104,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	ctOpsConnections, err := ctOpsConnectionsFromEnv(os.Getenv("CT_CVE_CT_OPS_CONNECTIONS"))
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		HTTPAddr:          valueOrDefault(os.Getenv("CT_CVE_HTTP_ADDR"), ":8080"),
@@ -90,6 +115,7 @@ func Load() (Config, error) {
 		FeedSyncInterval:  feedSyncInterval,
 		FeedSyncOnStartup: feedSyncOnStartup,
 		FeedHTTPTimeout:   feedHTTPTimeout,
+		CTOpsConnections:  ctOpsConnections,
 		Sources: SourceConfig{
 			NVD: NVDSourceConfig{
 				Enabled:      nvdEnabled,
@@ -107,6 +133,101 @@ func Load() (Config, error) {
 		return Config{}, errors.New("CT_CVE_DATABASE_URL is required")
 	}
 	return cfg, nil
+}
+
+func ctOpsConnectionsFromEnv(value string) ([]ctops.Connection, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	var raw []rawCTOpsConnection
+	if err := json.Unmarshal([]byte(value), &raw); err != nil {
+		return nil, fmt.Errorf("CT_CVE_CT_OPS_CONNECTIONS must be valid JSON: %w", err)
+	}
+	connections := make([]ctops.Connection, 0, len(raw))
+	for index, entry := range raw {
+		path := fmt.Sprintf("CT_CVE_CT_OPS_CONNECTIONS[%d]", index)
+		name := strings.TrimSpace(entry.Name)
+		orgID := strings.TrimSpace(entry.OrgID)
+		if name == "" || orgID == "" {
+			return nil, fmt.Errorf("%s must include name and orgId", path)
+		}
+		baseURL, err := normalizeBaseURL(entry.CTOpsBaseURL, path+".ctOpsBaseUrl")
+		if err != nil {
+			return nil, err
+		}
+		inventoryTokens := make([]ctops.ServiceToken, 0, len(entry.InventoryTokens))
+		for tokenIndex, rawToken := range entry.InventoryTokens {
+			token, err := parseServiceToken(rawToken, orgID, fmt.Sprintf("%s.inventoryTokens[%d]", path, tokenIndex))
+			if err != nil {
+				return nil, err
+			}
+			inventoryTokens = append(inventoryTokens, token)
+		}
+		if len(inventoryTokens) == 0 {
+			return nil, fmt.Errorf("%s.inventoryTokens must include at least one token", path)
+		}
+		ctOpsToken, err := parseServiceToken(entry.CTOpsToken, orgID, path+".ctOpsToken")
+		if err != nil {
+			return nil, err
+		}
+		connections = append(connections, ctops.Connection{
+			Name:            name,
+			OrgID:           orgID,
+			CTOpsBaseURL:    baseURL,
+			InventoryTokens: inventoryTokens,
+			CTOpsToken:      ctOpsToken,
+		})
+	}
+	return connections, nil
+}
+
+func parseServiceToken(raw rawCTOpsServiceToken, orgID, path string) (ctops.ServiceToken, error) {
+	id := strings.TrimSpace(raw.ID)
+	if id == "" || raw.Secret == "" {
+		return ctops.ServiceToken{}, fmt.Errorf("%s must include id and secret", path)
+	}
+	if !secretHasEnoughEntropy(raw.Secret) {
+		return ctops.ServiceToken{}, fmt.Errorf("%s.secret must contain at least 32 bytes of entropy", path)
+	}
+	scopes := make([]ctops.ServiceTokenScope, 0, len(raw.Scopes))
+	for _, rawScope := range raw.Scopes {
+		scope := ctops.ServiceTokenScope(strings.TrimSpace(rawScope))
+		switch scope {
+		case ctops.ScopeInventoryWrite, ctops.ScopeFindingsWrite, ctops.ScopeConnectionRead:
+			scopes = append(scopes, scope)
+		default:
+			return ctops.ServiceToken{}, fmt.Errorf("%s.scopes contains unsupported scope %q", path, rawScope)
+		}
+	}
+	if len(scopes) == 0 {
+		return ctops.ServiceToken{}, fmt.Errorf("%s.scopes must include at least one scope", path)
+	}
+	return ctops.ServiceToken{
+		ID:      id,
+		Secret:  raw.Secret,
+		OrgID:   orgID,
+		Scopes:  scopes,
+		Revoked: raw.Revoked,
+	}, nil
+}
+
+func normalizeBaseURL(value, name string) (string, error) {
+	parsedURL, err := validateHTTPURL(name, strings.TrimSpace(value))
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(parsedURL)
+	if err != nil {
+		return "", err
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func secretHasEnoughEntropy(value string) bool {
+	return len(value) >= serviceTokenMinBytes
 }
 
 func (cfg Config) ApplySourceSettings(settings []SourceSettings) Config {

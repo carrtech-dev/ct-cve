@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/carrtech-dev/ct-cve/internal/config"
+	"github.com/carrtech-dev/ct-cve/internal/ctops"
 	"github.com/carrtech-dev/ct-cve/internal/feed"
 	"github.com/carrtech-dev/ct-cve/internal/gui"
 	"github.com/carrtech-dev/ct-cve/internal/store"
@@ -49,6 +50,11 @@ func main() {
 
 	mux := http.NewServeMux()
 	gui.NewHandler(cfg, db).Register(mux)
+	ctops.NewHandler(ctops.HandlerOptions{
+		Connections: cfg.CTOpsConnections,
+		Store:       db,
+		HTTPClient:  &http.Client{Timeout: cfg.FeedHTTPTimeout},
+	}).Register(mux)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
